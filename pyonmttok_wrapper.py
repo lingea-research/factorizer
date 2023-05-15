@@ -64,7 +64,6 @@ class PyonmttokWrapper:
 			else sys.stdout as tgt:
 
 			for s in src:
-				print(s)
 				tgt.write(self.tokenize(s))
 
 			# tokenized_sentences = self.tokenize(src)
@@ -255,7 +254,7 @@ class PyonmttokWrapper:
 			for sent, constr in zip(src, constraints):
 				yield list(_generate_slices())
 
-		def generate_tokenized() -> Iterable[str]:
+		def generate_tokenized(sskip: float=0.0, wskip: float=0.0) -> Iterable[str]:
 			"""
 			"""
 			add_space = True
@@ -271,6 +270,7 @@ class PyonmttokWrapper:
 												*[f'{c_sw}|t2' if not re.search(byte_seq_pattern, c_sw) else c_sw for c_sw in c.split()]])
 				else:
 					s = ' '.join(f'{s_sw}|t0' if not re.search(byte_seq_pattern, s_sw) else s_sw for s_sw in s.split())
+
 				first, *others = s.split(' ', 1)
 				if add_space:
 					first = first.replace('|gl+', '|gl-')
@@ -293,7 +293,7 @@ class PyonmttokWrapper:
 			slice_transposed = list(zip(*slice))  # transpose: slice_transposed[0] is sliced src, slice_transposed[1] is sliced constraints
 			slice_tokenized, constr_tokenized = list(self._tokenize(slice_transposed[0])), \
 				                                  list(self._tokenize(slice_transposed[1]))
-			yield ' '.join(generate_tokenized())
+			yield ' '.join(generate_tokenized(sskip, wskip))
 
 	def _detokenize(self, src: Union[list[str], TextIO]) -> Iterable[str]:
 		"""Detokenizes given sentence(s)
@@ -333,7 +333,7 @@ class PyonmttokWrapper:
 			"""
 			return any([factor in factors2find for factor in factors])
 
-		def assign_join(token: pyonmttok.Token, factors: list[str]):
+		def assign_join(token: pyonmttok.Token, factors: list):
 			"""Sets token's attributes based on `factors`
 
 			Args:
