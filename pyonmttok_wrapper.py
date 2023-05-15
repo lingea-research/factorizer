@@ -23,13 +23,13 @@ class PyonmttokWrapper:
 		self.reserved_symbols = reserved_symbols
 
 	def tokenize(self, src: Union[list[str], str, TextIO]=[],
-	             constraints: list[dict[tuple[int, int], list[str]]]=[],
+	             constraints: list[dict[tuple[int, int], str]]=[],
 							 wskip: float=0.0, sskip: float=0.0) -> Union[list[str], str]:
 		"""@TODO overloading?
 		"""
-		if src and any(constraints):
+		if src and constraints:
 			if isinstance(src, str):
-				return list(self._tokenize_w_constraints([src], [constraints], wskip=wskip, sskip=sskip))[0]
+				return list(self._tokenize_w_constraints([src], constraints, wskip=wskip, sskip=sskip))[0]
 			return list(self._tokenize_w_constraints(src, constraints, wskip=wskip, sskip=sskip))
 		if src:
 			if isinstance(src, str):
@@ -46,7 +46,8 @@ class PyonmttokWrapper:
 			return list(self._detokenize(src))
 		return []
 
-	def tokenize_file(self, src_path: str, tgt_path: str) -> None:
+	def tokenize_file(self, src_path: str, tgt_path: str, constr_path: str='',
+	                  wskip: float=0.0, sskip: float=0.0) -> None:
 		"""Tokenizes content of the source file
 
 		Args:
@@ -56,18 +57,24 @@ class PyonmttokWrapper:
 		"""
 
 		if src_path is not sys.stdin and not os.path.exists(src_path):
+			print('Source file does not exist', file=sys.stderr)
 			return
 
-		with open(src_path, 'r') if src_path is not sys.stdin \
-			else sys.stdin as src, \
-			 open(tgt_path, 'w') if tgt_path is not sys.stdout \
-			else sys.stdout as tgt:
+		if constr_path and not os.path.exists(constr_path):
+			print('Constraints file does not exist', file=sys.stderr)
+			return
 
-			for s in src:
-				tgt.write(self.tokenize(s))
+		with open(src_path, 'r') if src_path is not sys.stdin else sys.stdin as src, \
+			 open(tgt_path, 'w') if tgt_path is not sys.stdout else sys.stdout as tgt:
 
-			# tokenized_sentences = self.tokenize(src)
-			# tgt.write(''.join(tokenized_sentences))
+			constr = open(constr_path, 'r') if constr_path else None
+			if constr:
+				for s, c in zip(src, constr):
+					tgt.write(self.tokenize(s, [eval(c)], wskip, sskip))
+				constr.close()
+			else:
+				for s in src:
+					tgt.write(self.tokenize(s))
 
 
 	def detokenize_file(self, src_path: str, tgt_path: str) -> None:
@@ -82,16 +89,11 @@ class PyonmttokWrapper:
 		if src_path is not sys.stdin and not os.path.exists(src_path):
 			return
 
-		with open(src_path, 'r') if src_path is not sys.stdin \
-			else sys.stdin as src, \
-				open(tgt_path, 'w') if tgt_path is not sys.stdout \
-			else sys.stdout as tgt:
+		with open(src_path, 'r') if src_path is not sys.stdin else sys.stdin as src, \
+		  open(tgt_path, 'w') if tgt_path is not sys.stdout else sys.stdout as tgt:
 
 			for s in src:
 				tgt.write(self.detokenize(s))
-
-			# detokenized_sentences = self.detokenize(src)
-			# tgt.write(''.join(detokenized_sentences))
 
 
 	def _tokenize(self, src: Union[list[str], TextIO]) -> Iterable[str]:
@@ -216,7 +218,6 @@ class PyonmttokWrapper:
 															wskip: float=0.0, sskip: float=0.0) -> Iterable[str]:
 		"""
 		"""
-
 		def generate_slices() -> Iterable[Iterable[str]]:
 			"""Generates slices for sentences
 			It is assumed that the only delimiter between words is whitespace
@@ -254,7 +255,7 @@ class PyonmttokWrapper:
 			for sent, constr in zip(src, constraints):
 				yield list(_generate_slices())
 
-		def generate_tokenized(sskip: float=0.0, wskip: float=0.0) -> Iterable[str]:
+		def generate_tokenized() -> Iterable[str]:
 			"""
 			"""
 			add_space = True
@@ -265,13 +266,14 @@ class PyonmttokWrapper:
 					add_space = True
 					continue
 				# if constraint -> join both
-				if not skip_sent and wskip < random.random() and c:
+				if c and not skip_sent and wskip < random.random():
 					s = ' '.join([*[f'{s_sw}|t1' if not re.search(byte_seq_pattern, s_sw) else s_sw for s_sw in s.split()],
 												*[f'{c_sw}|t2' if not re.search(byte_seq_pattern, c_sw) else c_sw for c_sw in c.split()]])
 				else:
-					s = ' '.join(f'{s_sw}|t0' if not re.search(byte_seq_pattern, s_sw) else s_sw for s_sw in s.split())
+					s = ' '.join([f'{s_sw}|t0' if not re.search(byte_seq_pattern, s_sw) else s_sw for s_sw in s.split()])
 
 				first, *others = s.split(' ', 1)
+
 				if add_space:
 					first = first.replace('|gl+', '|gl-')
 					first = first.replace('|wbn', '|wb')
@@ -288,12 +290,11 @@ class PyonmttokWrapper:
 				constraints += {},
 
 		src_slices = generate_slices()
-
 		for slice in src_slices:
 			slice_transposed = list(zip(*slice))  # transpose: slice_transposed[0] is sliced src, slice_transposed[1] is sliced constraints
 			slice_tokenized, constr_tokenized = list(self._tokenize(slice_transposed[0])), \
-				                                  list(self._tokenize(slice_transposed[1]))
-			yield ' '.join(generate_tokenized(sskip, wskip))
+			                                    list(self._tokenize(slice_transposed[1]))
+			yield f'{" ".join(generate_tokenized())}{newline if src[0].endswith(newline) else ""}'
 
 	def _detokenize(self, src: Union[list[str], TextIO]) -> Iterable[str]:
 		"""Detokenizes given sentence(s)
@@ -440,12 +441,6 @@ if __name__ == '__main__':
 		tokenizer = PyonmttokWrapper(model=args.model,
 		                             add_in=args.add_in,
 		                             case_feature=args.case_feature)
-		if args.constraints:
-			import json  # useless import?
-			with open(args.src, 'r') as src, open(args.tgt, 'w') as tgt, open(args.constraints, 'r') as constraints:
-				for line_src, line_const in zip(src, constraints):
-					tgt.write(' '.join(tokenizer.tokenize(src=[line_src], constraints=[eval(line_const)], wskip=args.wskip, sskip=args.sskip))+'\n')
-		else:
-			tokenizer.tokenize_file(args.src, args.tgt) if args.tokenize \
-		    else tokenizer.detokenize_file(args.src, args.tgt) if args.detokenize \
-		    else None
+		tokenizer.tokenize_file(args.src, args.tgt, args.constraints, args.wskip, args.sskip) if args.tokenize \
+			else tokenizer.detokenize_file(args.src, args.tgt) if args.detokenize \
+			else None
