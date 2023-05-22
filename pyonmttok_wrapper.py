@@ -404,20 +404,6 @@ class PyonmttokWrapper:
 			yield self.tokenizer.detokenize(tokens)
 
 
-def main():
-	tokenizer = PyonmttokWrapper(
-		model='/home/large/data/models/marian/csen_factored_pyonmttok_fs.20221118/pyonmttok/csen-lowered.spm',
-		add_in=False, case_feature=True
-	)
-	for tok in list(
-		tokenizer.tokenize(src=['Last Friday I😊 saw a spotted striped blue worm shake hands with a legless lizard.', '"That building is tall."'],
-		                   constraints=[{(0,4): 'posledni', (5,11): 'Patek', (12,13): 'Ja', (13,14): '嘚', (37,41): 'modry'}, {(6,14): 'stavba', (0,1): '«', (23,24): '»'}], wskip=0.2, sskip=0.5)):
-		print(tok)
-	# out:
-	# LAST|ci|wb|1 PO|cn|wb|2 SLED|cn|wbn|2 NI|cn|wbn|2 FRIDAY|ci|wb|1 PAT|ci|wb|2 EK|cn|wbn|2 I|scu|wb|1 JA|ci|wb|2 {unk,gl,gr}|gl+|gr-|1 <1> <2> <8> <5> <2> <2> <#> {unk,gl,gr}|gl-|gr-|2 <2> <2> <0> <4> <2> <#> SAW|cn|wb|0 A|scl|wb|0 SPOTTED|cn|wb|0 STRIP|cn|wb|0 ED|cn|wbn|0 BLUE|cn|wb|1 MOD|cn|wb|2 RY|cn|wbn|2 WORM|cn|wb|0 SHAKE|cn|wb|0 HANDS|cn|wb|0 WITH|cn|wb|0 A|scl|wb|0 LEG|cn|wb|0 LESS|cn|wbn|0 LIZ|cn|wb|0 ARD|cn|wbn|0 .|gl+|gr-|0
-	# THAT|ci|wb|0 BUILDING|cn|wb|1 STAVBA|cn|wb|2 IS|cn|wb|0 TALL|cn|wb|0 .|gl+|gr-|0
-
-
 def parse_args():
 	parser = argparse.ArgumentParser()
 	tokenize = parser.add_mutually_exclusive_group(required=True)
@@ -426,21 +412,19 @@ def parse_args():
 	parser.add_argument('-s', '--src', default=sys.stdin, type=str, help='Either a path to source file or string to be processed')
 	parser.add_argument('-t', '--tgt', default=sys.stdout, type=str, help='Path to target file')
 	parser.add_argument('-c', '--constraints', default=None, type=str, help='Path to constraints file')
-	parser.add_argument('-w', '--wskip', default=0.0, type=float, help='Word skip probability, for training only')
+	parser.add_argument('--wskip', default=0.0, type=float, help='Word skip probability, for training only')
 	parser.add_argument('--sskip', default=0.0, type=float, help='Sentence skip probability, for training only')
 	parser.add_argument('-m', '--model', default=None, type=str, help='Path to SP model')
 	parser.add_argument('--add_in', action='store_true', default=False)
 	parser.add_argument('--no_case_feature', action='store_false', dest='case_feature', default=True)
 	return parser.parse_args()
 
+
 if __name__ == '__main__':
-	if 0:
-		main()
-	else:
-		args = parse_args()
-		tokenizer = PyonmttokWrapper(model=args.model,
-		                             add_in=args.add_in,
-		                             case_feature=args.case_feature)
-		tokenizer.tokenize_file(args.src, args.tgt, args.constraints, args.wskip, args.sskip) if args.tokenize \
-			else tokenizer.detokenize_file(args.src, args.tgt) if args.detokenize \
-			else None
+	args = parse_args()
+	tokenizer = PyonmttokWrapper(model=args.model,
+	                             add_in=args.add_in,
+	                             case_feature=args.case_feature)
+	tokenizer.tokenize_file(args.src, args.tgt, args.constraints, args.wskip, args.sskip) if args.tokenize \
+		else tokenizer.detokenize_file(args.src, args.tgt) if args.detokenize \
+		else None
