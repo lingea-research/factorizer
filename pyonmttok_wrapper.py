@@ -46,7 +46,7 @@ class PyonmttokWrapper:
 			return list(self._detokenize(src))
 		return []
 
-	def tokenize_file(self, src_path: str, tgt_path: str, constr_path: str='',
+	def tokenize_cli(self, src_path: str, tgt_path: str, constr_path: str='',
 	                  wskip: float=0.0, sskip: float=0.0) -> None:
 		"""Tokenizes content of the source file
 
@@ -77,7 +77,7 @@ class PyonmttokWrapper:
 					tgt.write(self.tokenize(s))
 
 
-	def detokenize_file(self, src_path: str, tgt_path: str) -> None:
+	def detokenize_cli(self, src_path: str, tgt_path: str) -> None:
 		"""Detokenizes content of the source file
 
 		Args:
@@ -216,11 +216,20 @@ class PyonmttokWrapper:
 	def _tokenize_w_constraints(self, src: list[str],
 	                            constraints: list[dict[tuple[int, int], list[str]]],
 															wskip: float=0.0, sskip: float=0.0) -> Iterable[str]:
+		"""Tokenizes the input with constraints
+
+		Args:
+			src (list): list of raw source sentences
+			constraints (list): list of constraints of shape (range -> constraint)
+			wskip (float): probability of a word skip
+			sskip (float): probability of a sentence skip
+
+		Returns:
+			output (list): tokenized sentences
 		"""
-		"""
+
 		def generate_slices() -> Iterable[Iterable[str]]:
-			"""Generates slices for sentences
-			It is assumed that the only delimiter between words is whitespace
+			"""Generates slices for sentences. It is assumed that the only delimiter between words is whitespace
 
 			Returns:
 				slices (Generator): iterable of slices
@@ -422,9 +431,7 @@ def parse_args():
 
 if __name__ == '__main__':
 	args = parse_args()
-	tokenizer = PyonmttokWrapper(model=args.model,
-	                             add_in=args.add_in,
-	                             case_feature=args.case_feature)
-	tokenizer.tokenize_file(args.src, args.tgt, args.constraints, args.wskip, args.sskip) if args.tokenize \
-		else tokenizer.detokenize_file(args.src, args.tgt) if args.detokenize \
+	tokenizer = PyonmttokWrapper(model=args.model, add_in=args.add_in, case_feature=args.case_feature)
+	tokenizer.tokenize_cli(args.src, args.tgt, args.constraints, args.wskip, args.sskip) if args.tokenize \
+		else tokenizer.detokenize_cli(args.src, args.tgt) if args.detokenize \
 		else None
