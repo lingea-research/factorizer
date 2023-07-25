@@ -3,6 +3,7 @@
 import argparse
 from typing import Iterable, Union, TextIO
 import pyonmttok
+from itertools import takewhile, islice
 import re
 import os
 import sys
@@ -11,7 +12,8 @@ import random
 
 
 random.seed(1234)
-newline = '\n'
+nl = '\n'
+cr = '\r'
 
 
 class PyonmttokWrapper:
@@ -25,8 +27,6 @@ class PyonmttokWrapper:
 	def tokenize(self, src: Union[list[str], str, TextIO]=[],
 	             constraints: list[dict[tuple[int, int], str]]=[],
 							 wskip: float=0.0, sskip: float=0.0) -> Union[list[str], str]:
-		"""@TODO overloading?
-		"""
 		if src and constraints:
 			if isinstance(src, str):
 				return list(self._tokenize_w_constraints([src], constraints, wskip=wskip, sskip=sskip))[0]
@@ -38,8 +38,6 @@ class PyonmttokWrapper:
 		return []
 
 	def detokenize(self, src: Union[list[str], str, TextIO]=[]) -> Union[list[str], str]:
-		"""@TODO overloading?
-		"""
 		if src:
 			if isinstance(src, str):
 				return list(self._detokenize([src]))[0]
@@ -48,12 +46,11 @@ class PyonmttokWrapper:
 
 	def tokenize_cli(self, src_path: str, tgt_path: str, constr_path: str='',
 	                  wskip: float=0.0, sskip: float=0.0) -> None:
-		"""Tokenizes content of the source file
+		"""Tokenizes the content of the source file
 
 		Args:
 			src_path (str): path to source file
 			tgt_path (str): path to target file
-
 		"""
 
 		if src_path is not sys.stdin and not os.path.exists(src_path):
@@ -83,7 +80,6 @@ class PyonmttokWrapper:
 		Args:
 			src_path (str): path to source file
 			tgt_path (str): path to target file
-
 		"""
 
 		if src_path is not sys.stdin and not os.path.exists(src_path):
@@ -97,7 +93,7 @@ class PyonmttokWrapper:
 
 
 	def _tokenize(self, src: Union[list[str], TextIO]) -> Iterable[str]:
-		"""Tokenizes given sentences
+		"""Tokenizes the given sentence(s)
 
 		Args:
 			src (list|TextIO): either a source file path or a list of input sentences
@@ -107,7 +103,7 @@ class PyonmttokWrapper:
 		"""
 
 		def parse_bits(byte: str) -> int:
-			"""Parses first 4 bits from the first byte of utf-8 encoding
+			"""Parses the first 4 bits from the first byte (utf-8)
 
 			Args:
 				byte (str): string of byte
@@ -121,16 +117,16 @@ class PyonmttokWrapper:
 			return cnt if cnt > 0 else 1
 
 		def byte_sequence2dec_sequence(byte_sequence: list[str]) -> str:
-			"""Translates hexadecimal byte sequence to decimal sequence
+			"""Translates hexadecimal byte sequence to a decimal sequence
 
 			Args:
-				byte_sequence (list): sequence of bytes
+				byte_sequence (list): byte sequence
 
 			Returns:
-				decimal sequence (str): decimal representation of byte sequence
+				decimal sequence (str): decimal representation of the byte sequence
 			"""
-			return f'{" ".join([f"<{c}>" for c in str(ord(bytearray.fromhex("".join(byte_sequence)).decode("utf8")))])} ' \
-				     f'<#>'
+
+			return f'{" ".join([f"<{c}>" for c in str(ord(bytearray.fromhex("".join(byte_sequence)).decode("utf8")))])} <#>'
 
 		def search_byte_pattern(txt: str) -> re.Match:
 			"""Searches for <0xDD> pattern in `txt`
@@ -141,6 +137,7 @@ class PyonmttokWrapper:
 			Returns:
 				bytes (re.Match): found byte sequence
 			"""
+
 			return re.search(r'(?<=\<0[x])[\da-f]{2}(?=\>)', txt, flags=re.IGNORECASE)
 
 		def get_join_factors(token: pyonmttok.Token) -> str:
@@ -152,19 +149,14 @@ class PyonmttokWrapper:
 			Returns:
 				factors (str): string representation of join factors
 			"""
+
 			join_factors = '|gl+' if token.join_left else '|gl-'  # if join left
 			join_factors += '|gr+' if token.join_right else '|gr-'  # if join right
 			return join_factors
 
-		for sent in src:
-			tokens = self.tokenizer.tokenize(sent, as_token_objects=True)
-			skip = 0
-			for j, token in enumerate(tokens):
-				# skip processed byte sequence
-				if skip > 1:
-					skip -= 1
-					continue
-
+		def process_tokens(tokens: list[pyonmttok.Token]) -> Iterable[pyonmttok.Token]:
+			tokens = iter(tokens)
+			for token in tokens:
 				token_text, byte = token.surface, None
 
 				# reserved symbols
@@ -195,11 +187,10 @@ class PyonmttokWrapper:
 
 				# unicode (find first byte in byte sequence)
 				elif byte := search_byte_pattern(token_text):
-					skip = parse_bits(byte.group())  # number of tokens to be skipped
-					end = skip + j  # end of byte sequence
-					token.features += '{unk,gl,gr}',  # unknown token
-					token.features += get_join_factors(token),
-					token.surface = byte_sequence2dec_sequence([search_byte_pattern(token.surface).group() for token in tokens[j:end]])
+					token_sequence_length = parse_bits(byte.group())  # number of tokens to be skipped
+					token.features = ['{unk,gl,gr}', get_join_factors(token)]
+					token_sequence = [token, *islice(tokens, 0, token_sequence_length-1)]
+					token.surface = byte_sequence2dec_sequence(search_byte_pattern(token.surface).group() for token in token_sequence)
 
 				# other
 				else:
@@ -207,11 +198,15 @@ class PyonmttokWrapper:
 					token.features += '|in' if self.add_in else '',
 
 				new_surface = token.surface.upper() if token.surface.upper().lower() == token.surface else token.surface
-				token.surface = f'{new_surface}{"".join(token.features)}' if not byte \
-					         else f'{"".join(token.features)} {token.surface}'
+				token.surface = f'{new_surface}{"".join(token.features)}' if not byte else f'{"".join(token.features)} {token.surface}'
+				yield token
+
+		for sent in src:
+			tokens = self.tokenizer.tokenize(sent, as_token_objects=True)
+			tokens = process_tokens(tokens)
 
 			yield f'{" ".join([token.surface for token in tokens if token.surface and not search_byte_pattern(token.surface)])}' \
-			      f'{newline if sent.endswith(newline) else ""}'
+			      f'{nl if sent.endswith((nl, cr)) else ""}'
 
 	def _tokenize_w_constraints(self, src: list[str],
 	                            constraints: list[dict[tuple[int, int], list[str]]],
@@ -241,6 +236,7 @@ class PyonmttokWrapper:
 				Returns:
 					slices (Generator): slices that were constructed based on constraints
 				"""
+
 				prev_start_idx = 0
 				for key, val in sorted(constr.items()):
 					# yield everything between constraint ranges
@@ -267,6 +263,7 @@ class PyonmttokWrapper:
 		def generate_tokenized() -> Iterable[str]:
 			"""
 			"""
+
 			add_space = True
 			byte_seq_pattern = r'^<[\d\#]>$'
 			skip_sent = sskip > random.random()
@@ -303,10 +300,10 @@ class PyonmttokWrapper:
 			slice_transposed = list(zip(*slice))  # transpose: slice_transposed[0] is sliced src, slice_transposed[1] is sliced constraints
 			slice_tokenized, constr_tokenized = list(self._tokenize(slice_transposed[0])), \
 			                                    list(self._tokenize(slice_transposed[1]))
-			yield f'{" ".join(generate_tokenized())}{newline if src[0].endswith(newline) else ""}'
+			yield f'{" ".join(generate_tokenized())}{nl if src[0].endswith((nl, cr)) else ""}'
 
 	def _detokenize(self, src: Union[list[str], TextIO]) -> Iterable[str]:
-		"""Detokenizes given sentence(s)
+		"""Detokenizes sentence(s)
 
 		Args:
 			src (list): list of input sentences
@@ -314,7 +311,6 @@ class PyonmttokWrapper:
 		Returns:
 			output (list): detokenized sentences
 		"""
-
 		def extract_subword_n_factors(token: str):
 			"""Extracts subword and factors from given token
 
@@ -325,6 +321,7 @@ class PyonmttokWrapper:
 				subword (str): subword
 				factors (list): factors
 			"""
+
 			try:
 				subword, factors = token.split('|', 1)
 			except ValueError:
@@ -341,9 +338,10 @@ class PyonmttokWrapper:
 			Returns:
 				found (bool): true if any of desired factors are present
 			"""
-			return any([factor in factors2find for factor in factors])
 
-		def assign_join(token: pyonmttok.Token, factors: list):
+			return any(factor in factors2find for factor in factors)
+
+		def assign_join(token: pyonmttok.Token, factors: list[str]):
 			"""Sets token's attributes based on `factors`
 
 			Args:
@@ -353,64 +351,50 @@ class PyonmttokWrapper:
 			token.join_left = True if 'gl+' in factors else False
 			token.join_right = True if 'gr+' in factors else False
 
-		for sent in src:
-			tokens, splitted, byte_sequence_mode, byte_sequence, byte_sequence_factors = \
-				[], sent.split(), False, '', []
-			for j, token in enumerate(splitted):
-
-				# unk token
+		def process_tokens(tokens: list[str]) -> list[pyonmttok.Token]:
+			tokens = iter(tokens)
+			for token in tokens:
+				new_token = pyonmttok.Token()
+				# byte sequence
 				if re.search(r'{unk,gl,gr}', token):
-					byte_sequence, byte_sequence_mode = '', True
 					byte_sequence_factors = extract_subword_n_factors(token)[1]
-					continue
-
-				# if reading byte sequence
-				if byte_sequence_mode:
-					if token == '<#>':
-						byte_sequence_mode = False
-						token = pyonmttok.Token()
-						try:
-							token.surface, token.type, token.spacer, token.casing = \
-								chr(int(byte_sequence)), pyonmttok.TokenType.WORD, True, pyonmttok.Casing.NONE
-							token.surface = ' ' if token.surface in ['\n', '\r'] else token.surface
-						except OverflowError:  # invalid byte sequence
-							token.surface = ''
-						assign_join(token, byte_sequence_factors)
-						tokens.append(token)
-					else:
-						try:
-							byte_sequence += re.search(r'(?<=<)\d(?=>)', token).group(0)
-						except:  # empty token sequence/no #
-							if re.search(r'{unk,gl,gr}', token):
-								byte_sequence, byte_sequence_mode = '', True
-								byte_sequence_factors = extract_subword_n_factors(token)[1]
-								continue
+					byte_sequence = ''.join(re.search(r'(?<=<)\d(?=>)', next_token).group(0)
+			                            for next_token in takewhile(lambda t: t != '<#>', tokens))
+					try:
+						new_token.surface, new_token.type, new_token.spacer, new_token.casing = \
+						  chr(int(byte_sequence)), pyonmttok.TokenType.WORD, True, pyonmttok.Casing.NONE
+						# make it empty space if byte sequence is newline/carriage return
+						new_token.surface = ' ' if new_token.surface in [nl, cr] else new_token.surface
+					# invalid byte sequence
+					except OverflowError:
+						new_token.surface = ''
+					assign_join(new_token, byte_sequence_factors)
+					yield new_token
 					continue
 
 				subword, factors = extract_subword_n_factors(token)
-				token = pyonmttok.Token()
-
-				# word/subword/number
 				if find_any(factors, 'wbn', 'wb'):
-					token.casing, token.surface = (pyonmttok.Casing.UPPERCASE, subword) if find_any(factors, 'scu', 'ca') \
-						else (pyonmttok.Casing.CAPITALIZED, subword.lower().capitalize()) if 'ci' in factors \
-						else (pyonmttok.Casing.LOWERCASE, subword.lower()) if find_any(factors, 'scl', 'cn') \
-						else (pyonmttok.Casing.NONE, subword)
-					try:
-						token.type, token.join_left, token.spacer = (pyonmttok.TokenType.TRAILING_SUBWORD, True, False) if 'wbn' in factors \
-							else (pyonmttok.TokenType.LEADING_SUBWORD, False, True) if 'wbn' in extract_subword_n_factors(splitted[j+1])[1] \
-							else (pyonmttok.TokenType.WORD, False, True)
-					except IndexError:
-						token.type, token.join_left, token.spacer = pyonmttok.TokenType.WORD, False, True
+					# assign casing and surface
+					new_token.casing, new_token.surface = (pyonmttok.Casing.UPPERCASE, subword) if find_any(factors, 'scu', 'ca') \
+					  else (pyonmttok.Casing.CAPITALIZED, subword.lower().capitalize()) if 'ci' in factors \
+					  else (pyonmttok.Casing.LOWERCASE, subword.lower()) if find_any(factors, 'scl', 'cn') \
+					  else (pyonmttok.Casing.NONE, subword)
+					# assign type, join_left and spacer
+					new_token.type, new_token.join_left, new_token.spacer = (pyonmttok.TokenType.TRAILING_SUBWORD, True, False) if 'wbn' in factors \
+						else (pyonmttok.TokenType.WORD, False, True)
 
 				# punctuation, emoji
 				else:
-					token.surface, token.type, token.spacer, token.casing = subword, pyonmttok.TokenType.WORD, True, pyonmttok.Casing.NONE
-					assign_join(token, factors)
+					new_token.surface, new_token.type, new_token.spacer, new_token.casing = subword, pyonmttok.TokenType.WORD, True, pyonmttok.Casing.NONE
+					assign_join(new_token, factors)
 
-				tokens.append(token)
+				yield new_token
 
-			yield self.tokenizer.detokenize(tokens)
+		for sent in src:
+			tokens = sent.split()
+			tokens = list(process_tokens(tokens))
+			# add newline if there is one in the source sentence
+			yield f'{self.tokenizer.detokenize(tokens)}{nl if sent.endswith((nl, cr)) else ""}'
 
 
 def parse_args():
