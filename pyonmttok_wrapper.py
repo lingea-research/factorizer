@@ -383,5 +383,5 @@ if __name__ == '__main__':
 	args = parse_args()
 	tokenizer = PyonmttokWrapper(model=args.model, add_in=args.add_in, case_feature=args.case_feature)
 	tokenizer.tokenize(args.src, args.tgt, args.constraints, args.wskip, args.sskip) if args.tokenize \
-		else tokenizer.detokenize_cli(args.src, args.tgt) if args.detokenize \
+		else tokenizer.detokenize(args.src, args.tgt) if args.detokenize \
 		else None
