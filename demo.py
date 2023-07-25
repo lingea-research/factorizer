@@ -1,4 +1,4 @@
-from pyonmttok_wrapper_over import PyonmttokWrapper
+from pyonmttok_wrapper import PyonmttokWrapper
 
 
 def demo():
