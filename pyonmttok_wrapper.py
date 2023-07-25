@@ -6,15 +6,17 @@ import pyonmttok
 from itertools import takewhile, islice
 import re
 import os
+from io import TextIOWrapper
 import sys
 import codecs
 import random
+from multipledispatch import dispatch
 
 
 random.seed(1234)
 nl = '\n'
 cr = '\r'
-
+unk = '{unk,gl,gr}'
 
 class PyonmttokWrapper:
 
@@ -24,75 +26,40 @@ class PyonmttokWrapper:
 		self.add_in = add_in
 		self.reserved_symbols = reserved_symbols
 
-	def tokenize(self, src: Union[list[str], str, TextIO]=[],
-	             constraints: list[dict[tuple[int, int], str]]=[],
-							 wskip: float=0.0, sskip: float=0.0) -> Union[list[str], str]:
-		if src and constraints:
-			if isinstance(src, str):
-				return list(self._tokenize_w_constraints([src], constraints, wskip=wskip, sskip=sskip))[0]
-			return list(self._tokenize_w_constraints(src, constraints, wskip=wskip, sskip=sskip))
-		if src:
-			if isinstance(src, str):
-				return list(self._tokenize([src]))[0]
-			return list(self._tokenize(src))
-		return []
+	@dispatch(str, str, str, float, float)
+	def tokenize(self, src_path: str, tgt_path: str, constr_path: str='',
+	             wskip: float=0.0, sskip: float=0.0) -> None:
+		if constr_path:
+			self.tokenize(open(src_path, 'r'), open(tgt_path, 'w'), open(constr_path), wskip, sskip)
+		else:
+			self.tokenize(open(src_path, 'r'), open(tgt_path, 'w'))
 
-	def detokenize(self, src: Union[list[str], str, TextIO]=[]) -> Union[list[str], str]:
-		if src:
-			if isinstance(src, str):
-				return list(self._detokenize([src]))[0]
-			return list(self._detokenize(src))
-		return []
-
-	def tokenize_cli(self, src_path: str, tgt_path: str, constr_path: str='',
+	@dispatch(TextIOWrapper, TextIOWrapper, TextIOWrapper, float, float)
+	def tokenize(self, src: TextIOWrapper, tgt: TextIOWrapper, constr: TextIOWrapper=None,
 	                  wskip: float=0.0, sskip: float=0.0) -> None:
-		"""Tokenizes the content of the source file
-
-		Args:
-			src_path (str): path to source file
-			tgt_path (str): path to target file
+		"""Tokenize file with constraints
 		"""
+		for s, c in zip(src, constr):
+			tgt.write(self.tokenize(s, [eval(c)], wskip, sskip))
+		src.close()
+		tgt.close()
+		constr.close()
 
-		if src_path is not sys.stdin and not os.path.exists(src_path):
-			print('Source file does not exist', file=sys.stderr)
-			return
-
-		if constr_path and not os.path.exists(constr_path):
-			print('Constraints file does not exist', file=sys.stderr)
-			return
-
-		with open(src_path, 'r') if src_path is not sys.stdin else sys.stdin as src, \
-			 open(tgt_path, 'w') if tgt_path is not sys.stdout else sys.stdout as tgt:
-
-			constr = open(constr_path, 'r') if constr_path else None
-			if constr:
-				for s, c in zip(src, constr):
-					tgt.write(self.tokenize(s, [eval(c)], wskip, sskip))
-				constr.close()
-			else:
-				for s in src:
-					tgt.write(self.tokenize(s))
-
-
-	def detokenize_cli(self, src_path: str, tgt_path: str) -> None:
-		"""Detokenizes content of the source file
-
-		Args:
-			src_path (str): path to source file
-			tgt_path (str): path to target file
+	@dispatch(TextIOWrapper, TextIOWrapper)
+	def tokenize(self, src: TextIOWrapper, tgt: TextIOWrapper) -> None:
+		"""Tokenize file with no constraints
 		"""
+		for s in src:
+			tgt.write(self.tokenize(s))
+		src.close()
+		tgt.close()
 
-		if src_path is not sys.stdin and not os.path.exists(src_path):
-			return
+	@dispatch(str)
+	def tokenize(self, src: str) -> str:
+		return self.tokenize([src])[0]
 
-		with open(src_path, 'r') if src_path is not sys.stdin else sys.stdin as src, \
-		  open(tgt_path, 'w') if tgt_path is not sys.stdout else sys.stdout as tgt:
-
-			for s in src:
-				tgt.write(self.detokenize(s))
-
-
-	def _tokenize(self, src: Union[list[str], TextIO]) -> Iterable[str]:
+	@dispatch(list)
+	def tokenize(self, src: list[str]) -> list[str]:
 		"""Tokenizes the given sentence(s)
 
 		Args:
@@ -101,7 +68,6 @@ class PyonmttokWrapper:
 		Returns:
 			output (list): tokenized sentences
 		"""
-
 		def parse_bits(byte: str) -> int:
 			"""Parses the first 4 bits from the first byte (utf-8)
 
@@ -157,18 +123,17 @@ class PyonmttokWrapper:
 		def process_tokens(tokens: list[pyonmttok.Token]) -> Iterable[pyonmttok.Token]:
 			tokens = iter(tokens)
 			for token in tokens:
-				token_text, byte = token.surface, None
+				byte = None
 
 				# reserved symbols
-				if token_text in self.reserved_symbols:
-					byte = token_text.encode()
-					hex = codecs.encode(byte, 'hex')
-					hex = hex.decode()
-					token_text = token.surface = f'<0x{hex}>'
+				if token.surface in self.reserved_symbols:
+					byte = token.surface.encode()
+					hex = codecs.encode(byte, 'hex').decode()
+					token.surface = f'<0x{hex}>'
 
 				# alpha
-				if token_text.isalpha():
-					if len(token_text) > 1:  # word/subword
+				if token.surface.isalpha():
+					if len(token.surface) > 1:  # word/subword
 						token.features += '|ca' if token.casing == pyonmttok.Casing.UPPERCASE \
 							else '|ci' if token.casing == pyonmttok.Casing.CAPITALIZED \
 							else '|cn',
@@ -180,15 +145,15 @@ class PyonmttokWrapper:
 					token.features += '|in' if self.add_in else '',
 
 				# numeric
-				elif token_text.isnumeric():
+				elif token.surface.isnumeric():
 					token.features +='|wb' if token.type in [pyonmttok.TokenType.LEADING_SUBWORD, pyonmttok.TokenType.WORD] \
 						else '|wbn',
 					token.features += '|in' if self.add_in else '',
 
 				# unicode (find first byte in byte sequence)
-				elif byte := search_byte_pattern(token_text):
+				elif byte := search_byte_pattern(token.surface):
 					token_sequence_length = parse_bits(byte.group())  # number of tokens to be skipped
-					token.features = ['{unk,gl,gr}', get_join_factors(token)]
+					token.features = [unk, get_join_factors(token)]
 					token_sequence = [token, *islice(tokens, 0, token_sequence_length-1)]
 					token.surface = byte_sequence2dec_sequence(search_byte_pattern(token.surface).group() for token in token_sequence)
 
@@ -201,16 +166,18 @@ class PyonmttokWrapper:
 				token.surface = f'{new_surface}{"".join(token.features)}' if not byte else f'{"".join(token.features)} {token.surface}'
 				yield token
 
+		retval = []
 		for sent in src:
 			tokens = self.tokenizer.tokenize(sent, as_token_objects=True)
 			tokens = process_tokens(tokens)
 
-			yield f'{" ".join([token.surface for token in tokens if token.surface and not search_byte_pattern(token.surface)])}' \
-			      f'{nl if sent.endswith((nl, cr)) else ""}'
+			retval += f'{" ".join([token.surface for token in tokens if token.surface and not search_byte_pattern(token.surface)])}' \
+			      		f'{nl if sent.endswith((nl, cr)) else ""}',
+		return retval
 
-	def _tokenize_w_constraints(self, src: list[str],
-	                            constraints: list[dict[tuple[int, int], list[str]]],
-															wskip: float=0.0, sskip: float=0.0) -> Iterable[str]:
+	@dispatch(list, list, float, float)
+	def tokenize(self, src: list[str], constraints: list[dict[tuple[int, int], list[str]]],
+		           wskip: float=0.0, sskip: float=0.0) -> list[str]:
 		"""Tokenizes the input with constraints
 
 		Args:
@@ -242,20 +209,20 @@ class PyonmttokWrapper:
 					# yield everything between constraint ranges
 					between = sent[prev_start_idx:key[0]]
 					if between.startswith(' '):
-						yield ('', '')
+						yield ['', '']
 					if between.strip():
-						yield (between.strip(), '')
+						yield [between.strip(), '']
 					if between.endswith(' ') and len(between) > 1:
-						yield ('', '')
+						yield ['', '']
 					# yield constraint range
-					yield (sent[key[0]:key[1]], val)
+					yield [sent[key[0]:key[1]], val]
 					prev_start_idx = key[1]
 
 				# add last slice, even if its empty
 				if sent[prev_start_idx:].startswith(' '):
 					prev_start_idx += 1
-					yield ('', '')
-				yield (sent[prev_start_idx:].strip(), '')
+					yield ['', '']
+				yield [sent[prev_start_idx:].strip(), '']
 
 			for sent, constr in zip(src, constraints):
 				yield list(_generate_slices())
@@ -279,7 +246,6 @@ class PyonmttokWrapper:
 					s = ' '.join([f'{s_sw}|t0' if not re.search(byte_seq_pattern, s_sw) else s_sw for s_sw in s.split()])
 
 				first, *others = s.split(' ', 1)
-
 				if add_space:
 					first = first.replace('|gl+', '|gl-')
 					first = first.replace('|wbn', '|wb')
@@ -295,14 +261,38 @@ class PyonmttokWrapper:
 			while len(src) != len(constraints):
 				constraints += {},
 
+		retval = []
 		src_slices = generate_slices()
 		for slice in src_slices:
-			slice_transposed = list(zip(*slice))  # transpose: slice_transposed[0] is sliced src, slice_transposed[1] is sliced constraints
-			slice_tokenized, constr_tokenized = list(self._tokenize(slice_transposed[0])), \
-			                                    list(self._tokenize(slice_transposed[1]))
-			yield f'{" ".join(generate_tokenized())}{nl if src[0].endswith((nl, cr)) else ""}'
+			sliced_src, sliced_constr = (list(s) for s in list(zip(*slice)))  # transpose
+			slice_tokenized, constr_tokenized = list(self.tokenize(sliced_src)), \
+																					list(self.tokenize(sliced_constr))
+			retval += f'{" ".join(generate_tokenized())}{nl if src[0].endswith((nl, cr)) else ""}',
+		return retval
 
-	def _detokenize(self, src: Union[list[str], TextIO]) -> Iterable[str]:
+	@dispatch(str, str)
+	def detokenize(self, src_path: str, tgt_path: str) -> None:
+		"""Detokenizes the source file
+
+		Args:
+			src_path (str): path to source file
+			tgt_path (str): path to target file
+		"""
+		self.detokenize(open(src_path, 'r'), open(tgt_path, 'w'))
+
+	@dispatch(TextIOWrapper, TextIOWrapper)
+	def detokenize(self, src: TextIOWrapper, tgt: TextIOWrapper) -> None:
+		for s in src:
+			tgt.write(self.detokenize(s))
+		src.close()
+		tgt.close()
+
+	@dispatch(str)
+	def detokenize(self, src: str) -> Iterable[str]:
+		return self.detokenize([src])[0]
+
+	@dispatch(list)
+	def detokenize(self, src: list[str]) -> list[str]:
 		"""Detokenizes sentence(s)
 
 		Args:
@@ -312,16 +302,6 @@ class PyonmttokWrapper:
 			output (list): detokenized sentences
 		"""
 		def extract_subword_n_factors(token: str):
-			"""Extracts subword and factors from given token
-
-			Args:
-				token (str): token
-
-			Returns:
-				subword (str): subword
-				factors (list): factors
-			"""
-
 			try:
 				subword, factors = token.split('|', 1)
 			except ValueError:
@@ -329,25 +309,9 @@ class PyonmttokWrapper:
 			return subword, factors.split('|')
 
 		def find_any(factors: list, *factors2find: list):
-			"""Finds if any of `factors to find` are present in `factors`
-
-			Args:
-				factors (list): factors
-				factors2find (list): factors to be searched for
-
-			Returns:
-				found (bool): true if any of desired factors are present
-			"""
-
 			return any(factor in factors2find for factor in factors)
 
 		def assign_join(token: pyonmttok.Token, factors: list[str]):
-			"""Sets token's attributes based on `factors`
-
-			Args:
-				token (pyonmttok.Token): token class object
-				factors (list): factors assigned to this token
-			"""
 			token.join_left = True if 'gl+' in factors else False
 			token.join_right = True if 'gr+' in factors else False
 
@@ -356,7 +320,7 @@ class PyonmttokWrapper:
 			for token in tokens:
 				new_token = pyonmttok.Token()
 				# byte sequence
-				if re.search(r'{unk,gl,gr}', token):
+				if re.search(unk, token):
 					byte_sequence_factors = extract_subword_n_factors(token)[1]
 					byte_sequence = ''.join(re.search(r'(?<=<)\d(?=>)', next_token).group(0)
 			                            for next_token in takewhile(lambda t: t != '<#>', tokens))
@@ -390,11 +354,13 @@ class PyonmttokWrapper:
 
 				yield new_token
 
+		retval = []
 		for sent in src:
 			tokens = sent.split()
 			tokens = list(process_tokens(tokens))
 			# add newline if there is one in the source sentence
-			yield f'{self.tokenizer.detokenize(tokens)}{nl if sent.endswith((nl, cr)) else ""}'
+			retval += f'{self.tokenizer.detokenize(tokens)}{nl if sent.endswith((nl, cr)) else ""}',
+		return retval
 
 
 def parse_args():
@@ -404,7 +370,7 @@ def parse_args():
 	tokenize.add_argument('--detokenize', action='store_true')
 	parser.add_argument('-s', '--src', default=sys.stdin, type=str, help='Either a path to source file or string to be processed')
 	parser.add_argument('-t', '--tgt', default=sys.stdout, type=str, help='Path to target file')
-	parser.add_argument('-c', '--constraints', default=None, type=str, help='Path to constraints file')
+	parser.add_argument('-c', '--constraints', default='', type=str, help='Path to constraints file')
 	parser.add_argument('--wskip', default=0.0, type=float, help='Word skip probability, for training only')
 	parser.add_argument('--sskip', default=0.0, type=float, help='Sentence skip probability, for training only')
 	parser.add_argument('-m', '--model', default=None, type=str, help='Path to SP model')
@@ -412,10 +378,10 @@ def parse_args():
 	parser.add_argument('--no_case_feature', action='store_false', dest='case_feature', default=True)
 	return parser.parse_args()
 
-
+# cli
 if __name__ == '__main__':
 	args = parse_args()
 	tokenizer = PyonmttokWrapper(model=args.model, add_in=args.add_in, case_feature=args.case_feature)
-	tokenizer.tokenize_cli(args.src, args.tgt, args.constraints, args.wskip, args.sskip) if args.tokenize \
+	tokenizer.tokenize(args.src, args.tgt, args.constraints, args.wskip, args.sskip) if args.tokenize \
 		else tokenizer.detokenize_cli(args.src, args.tgt) if args.detokenize \
 		else None
