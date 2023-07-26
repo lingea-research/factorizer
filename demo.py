@@ -11,7 +11,7 @@ def demo():
 	wskip = 0.2
 	sskip = 0.5
 	tokenized = tokenizer.tokenize(input, constr)
-	tokenized = tokenizer.tokenize(input, constr, False, wskip, sskip)
+	tokenized = tokenizer.tokenize(input, constr, wskip, sskip)
 	print('Tokenized with constraints:', tokenized)
 	tokenized = tokenizer.tokenize(input)
 	print('Tokenized without constraints:', tokenized)
