@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 
 import argparse
-from typing import Iterable, Union, TextIO
+from typing import Iterable, Union
 import pyonmttok
+from collections import defaultdict
 from itertools import takewhile, islice
 import re
-import os
-from io import TextIOWrapper
+from io import TextIOWrapper, StringIO
 import sys
 import codecs
 import random
@@ -27,28 +27,31 @@ class PyonmttokWrapper:
 		self.reserved_symbols = reserved_symbols
 
 	@dispatch(str, str, str, float, float)
-	def tokenize(self, src_path: str, tgt_path: str, constr_path: str='',
-	             wskip: float=0.0, sskip: float=0.0) -> None:
-		if constr_path:
-			self.tokenize(open(src_path, 'r'), open(tgt_path, 'w'), open(constr_path), wskip, sskip)
-		else:
-			self.tokenize(open(src_path, 'r'), open(tgt_path, 'w'))
+	def tokenize(self, src_path: str, tgt_path: str, constr_path: str, wskip: float, sskip: float) -> None:
+		self.tokenize(open(src_path, 'r'), open(tgt_path, 'w'), open(constr_path), wskip, sskip)
+
+	@dispatch(str, str, str)
+	def tokenize(self, src_path: str, tgt_path: str, constr_path: str) -> None:
+		self.tokenize(open(src_path, 'r'), open(tgt_path, 'w'), open(constr_path, 'w'))
+
+	@dispatch(str, str)
+	def tokenize(self, src_path: str, tgt_path: str) -> None:
+		self.tokenize(open(src_path, 'r'), open(tgt_path, 'w'))
 
 	@dispatch(TextIOWrapper, TextIOWrapper, TextIOWrapper, float, float)
-	def tokenize(self, src: TextIOWrapper, tgt: TextIOWrapper, constr: TextIOWrapper=None,
-	                  wskip: float=0.0, sskip: float=0.0) -> None:
-		"""Tokenize file with constraints
-		"""
+	def tokenize(self, src: TextIOWrapper, tgt: TextIOWrapper, constr: TextIOWrapper, wskip: float, sskip: float) -> None:
 		for s, c in zip(src, constr):
 			tgt.write(self.tokenize(s, [eval(c)], wskip, sskip))
 		src.close()
 		tgt.close()
 		constr.close()
 
+	@dispatch(TextIOWrapper, TextIOWrapper, TextIOWrapper)
+	def tokenize(self, src: TextIOWrapper, tgt: TextIOWrapper, constr: TextIOWrapper) -> None:
+		self.tokenize(src, tgt, constr, 0.0, 0.0)
+
 	@dispatch(TextIOWrapper, TextIOWrapper)
 	def tokenize(self, src: TextIOWrapper, tgt: TextIOWrapper) -> None:
-		"""Tokenize file with no constraints
-		"""
 		for s in src:
 			tgt.write(self.tokenize(s))
 		src.close()
@@ -176,13 +179,13 @@ class PyonmttokWrapper:
 		return retval
 
 	@dispatch(list, list, float, float)
-	def tokenize(self, src: list[str], constraints: list[dict[tuple[int, int], list[str]]],
-		           wskip: float=0.0, sskip: float=0.0) -> list[str]:
+	def tokenize(self, src: list[str], constraints: list[dict[tuple[int, int], list[str]]], wskip: float, sskip: float) -> list[str]:
 		"""Tokenizes the input with constraints
 
 		Args:
 			src (list): list of raw source sentences
 			constraints (list): list of constraints of shape (range -> constraint)
+			f
 			wskip (float): probability of a word skip
 			sskip (float): probability of a sentence skip
 
@@ -270,6 +273,10 @@ class PyonmttokWrapper:
 			retval += f'{" ".join(generate_tokenized())}{nl if src[0].endswith((nl, cr)) else ""}',
 		return retval
 
+	@dispatch(list, list)
+	def tokenize(self, src: list[str], constraints: list[dict[tuple[int, int], list[str]]]) -> list[str]:
+		return self.tokenize(src, constraints, 0.0, 0.0)
+
 	@dispatch(str, str)
 	def detokenize(self, src_path: str, tgt_path: str) -> None:
 		"""Detokenizes the source file
@@ -288,7 +295,7 @@ class PyonmttokWrapper:
 		tgt.close()
 
 	@dispatch(str)
-	def detokenize(self, src: str) -> Iterable[str]:
+	def detokenize(self, src: str) -> str:
 		return self.detokenize([src])[0]
 
 	@dispatch(list)
@@ -362,7 +369,6 @@ class PyonmttokWrapper:
 			retval += f'{self.tokenizer.detokenize(tokens)}{nl if sent.endswith((nl, cr)) else ""}',
 		return retval
 
-
 def parse_args():
 	parser = argparse.ArgumentParser()
 	tokenize = parser.add_mutually_exclusive_group(required=True)
@@ -382,6 +388,8 @@ def parse_args():
 if __name__ == '__main__':
 	args = parse_args()
 	tokenizer = PyonmttokWrapper(model=args.model, add_in=args.add_in, case_feature=args.case_feature)
-	tokenizer.tokenize(args.src, args.tgt, args.constraints, args.wskip, args.sskip) if args.tokenize \
-		else tokenizer.detokenize(args.src, args.tgt) if args.detokenize \
-		else None
+	if args.tokenize:
+		tokenizer.tokenize(args.src, args.tgt, args.constraints, args.wskip, args.sskip) if args.constraints \
+		  else tokenizer.tokenize(args.src, args.tgt)
+	else:
+		tokenizer.detokenize(args.src, args.tgt)
