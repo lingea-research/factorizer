@@ -8,10 +8,13 @@ from itertools import takewhile, islice
 import re
 from io import TextIOWrapper, StringIO
 import sys
+import os
 import codecs
 import random
+import json
 from multipledispatch import dispatch
 
+from utils.lemmatizer import Lemmatizer
 
 random.seed(1234)
 nl = "\n"
@@ -115,9 +118,7 @@ class PyonmttokWrapper:
             Returns:
                 decimal sequence (str): dec representation of the byte sequence
             """
-            bytes_str = str(
-                ord(bytearray.fromhex("".join(byte_sequence)).decode("utf8"))
-            )
+            bytes_str = str(ord(bytearray.fromhex("".join(byte_sequence)).decode("utf8")))
             return f'{" ".join([f"<{c}>" for c in bytes_str])} <#>'
 
         def search_byte_pattern(txt: str) -> re.Match:
@@ -171,10 +172,7 @@ class PyonmttokWrapper:
                         token.features += (
                             "|scu"
                             if token.casing
-                            in [
-                                pyonmttok.Casing.CAPITALIZED,
-                                pyonmttok.Casing.UPPERCASE,
-                            ]
+                            in [pyonmttok.Casing.CAPITALIZED, pyonmttok.Casing.UPPERCASE,]
                             else "|scl",
                         )
                     # the beginning of word
@@ -239,14 +237,14 @@ class PyonmttokWrapper:
         for sent in src:
             tokens = self.tokenizer.tokenize(sent, as_token_objects=True)
             tokens = process_tokens(tokens)
-            tokenized = " ".join(
+            tokenized_joined = " ".join(
                 [
                     token.surface
                     for token in tokens
                     if token.surface and not search_byte_pattern(token.surface)
                 ]
             )
-            retval += (f'{tokenized}{nl if sent.endswith((nl, cr)) else ""}',)
+            retval += (f'{tokenized_joined}{nl if sent.endswith((nl, cr)) else ""}',)
         return retval
 
     @dispatch(list, list, float, float)
@@ -308,9 +306,6 @@ class PyonmttokWrapper:
                 yield list(_generate_slices())
 
         def generate_tokenized() -> Iterable[str]:
-            """
-            """
-
             add_space = True
             byte_seq_pattern = r"^<[\d\#]>$"
             skip_sent = sskip > random.random()
@@ -366,13 +361,11 @@ class PyonmttokWrapper:
         src_slices = generate_slices()
         for slice in src_slices:
             # transpose
-            sliced_src, sliced_constr = (
-                list(s) for s in list(zip(*slice))
-            )
+            sliced_src, sliced_constr = (list(s) for s in list(zip(*slice)))
             slice_tokenized = self.tokenize(sliced_src)
             constr_tokenized = self.tokenize(sliced_constr)
-            tokenized = " ".join(generate_tokenized())
-            retval += (f'{tokenized}{nl if src[0].endswith((nl, cr)) else ""}',)
+            tokenized_joined = " ".join(generate_tokenized())
+            retval += (f'{tokenized_joined}{nl if src[0].endswith((nl, cr)) else ""}',)
         return retval
 
     @dispatch(list, list)
@@ -420,7 +413,7 @@ class PyonmttokWrapper:
                 subword, factors = token, "|"
             return subword, factors.split("|")
 
-        def find_any(factors: list, *factors2find: list) -> bool:
+        def find_any(factors: list, *factors2find: list[str]) -> bool:
             return any(factor in factors2find for factor in factors)
 
         def assign_join(token: pyonmttok.Token, factors: list[str]) -> None:
@@ -432,6 +425,7 @@ class PyonmttokWrapper:
             for token in tokens:
                 subword, factors = extract_subword_n_factors(token)
                 new_token = pyonmttok.Token()
+
                 # byte sequence
                 if re.search(unk, token):
                     byte_sequence_factors = extract_subword_n_factors(token)[1]
@@ -492,9 +486,9 @@ class PyonmttokWrapper:
         for sent in src:
             tokens = sent.split()
             tokens = list(process_tokens(tokens))
-            detokenized = self.tokenizer.detokenize(tokens)
+            detokenized_joined = self.tokenizer.detokenize(tokens)
             # add newline if there is one in the source sentence
-            retval += (f'{detokenized}{nl if sent.endswith((nl, cr)) else ""}',)
+            retval += (f'{detokenized_joined}{nl if sent.endswith((nl, cr)) else ""}',)
 
         return retval
 
@@ -503,80 +497,188 @@ class PyonmttokWrapper:
         src_path: str,
         tgt_path: str,
         vocab_path: str,
-        return_list: bool = False,
         constraints_file: str = "",
-        word_size_threshold: int = 5,
-    ) -> Union[TextIOWrapper, list[dict[tuple[int, int], str]]]:
+        noisify: bool = True,
+        use_lemmatization: bool = True,
+        distance_threshold: float = 0.4,
+        src_lang: str = "",
+        tgt_lang: str = "",
+        liblemm_path: str = "lib",
+    ) -> Union[StringIO, list[dict[tuple[int, int], str]]]:
         """Generates the list of constraints
 
         Args:
-            vocab (str): path to the bilingual dictionary
-            src (str): path to the source file
-            tgt (str): path to the target file
-            return_list (bool): if to return a list of dictionaries
+            src_path (str): path to the source file
+            tgt_path (str): path to the target file
+            vocab_path (str): path to the bilingual dictionary
             constraints_file (str): file path to a file with resulting constraints
-            word_size_threshold (int): number of characters that should be in a word to be considered valid for a subword search
+            noisify (bool): noisify the substitutions
+            use_lemmatization (bool): add lemmatized versions to the dictionary and
+              source/target sentences
+            distance_threshold (float): distance threshold
+              (1.0 == length of target sentence) between matched words
+            liblemm_path (str): path to the folder with vocabularies
+              and language codes (lingea)
+            src_lang (str): iso code of the source language
+            tgt_lang (str): iso code of the target language
 
         Returns:
             constraints (dict|TextIO): list of ranges with corresponding words
         """
 
-        def find_spans():
-            src_span = re.finditer(src_word, src_sent)[used_src_words[src_word]].span()
-            tgt_span = re.finditer(tgt_word, tgt_sent)[used_tgt_words[tgt_word]].span()
+        lemmatize = False
+        if use_lemmatization and os.path.exists(liblemm_path):
+            if not all((src_lang, tgt_lang)):
+                src_lang, tgt_lang = vocab_path.rsplit(".", 1)[1].split(
+                    ("-", "_", ",", ":")
+                )
+            src_vocab_path = os.path.join(liblemm_path, f"lgmf_{src_lang}.lex")
+            tgt_vocab_path = os.path.join(liblemm_path, f"lgmf_{tgt_lang}.lex")
+            liblemm_iso_codes = os.path.join(liblemm_path, "liblemm_iso_codes.so")
+            src_lemmatizer = Lemmatizer(
+                src_lang, vocab=src_vocab_path, encoding="il2", path=liblemm_iso_codes
+            )
+            tgt_lemmatizer = Lemmatizer(
+                tgt_lang, vocab=tgt_vocab_path, encoding="il2", path=liblemm_iso_codes
+            )
+            lemmatize = True
+
+        vocab = defaultdict(set)
+
+        # read the vocab
+        with open(vocab_path, "r") as vocab_lines:
+            for line in vocab_lines:
+                src_word, tgt_word = (word for word in line.rstrip().split("\t"))
+                vocab[src_word].add(tgt_word)
+                if lemmatize:
+                    for src_word_lemma in src_lemmatizer.lemmatize(src_word):
+                        vocab[src_word_lemma] = vocab[src_word_lemma].union(
+                            tgt_lemmatizer.lemmatize(tgt_word)
+                        )
+
+        retval = []
+
+        def add2retval(
+            idx: int, tgt_word: str, spans: tuple[tuple[int, int], tuple[int, int]]
+        ) -> None:
+            if noisify:
+                # Esentially the same noisification as the one in the MLM
+                # 10% - do nothing
+                # 10% - random token from vocab
+                # 80% - normal substitution
+                dice_roll = random.uniform(0, 1)
+                if dice_roll < 0.1:
+                    return
+                elif dice_roll < 0.2:
+                    random_values = random.choice(list(vocab.values()))
+                    retval[idx][spans] = random.choice(list(random_values))
+                else:
+                    retval[idx][spans] = tgt_word
+            else:
+                retval[idx][spans] = tgt_word
             used_src_words[src_word] += 1
             used_tgt_words[tgt_word] += 1
-            return src_span, tgt_span
 
-        # read vocab
-        vocab = defaultdict(tuple)
-        with open(vocab_path, "r") as v:
-            for line in v:
-                src_word, tgt_word = line.split("\t")
-                if tgt_word not in vocab[src_word]:
-                    vocab[src_word] += (tgt_word,)
+        def find_spans():
+            word_boundaries = r"(?<![\w_]){word}(?![\w_])"
+            src_span = list(re.finditer(word_boundaries.format(word=src_word), src_sent))[
+                used_src_words[src_word]
+            ].span()
+            try:
+                tgt_span = list(
+                    re.finditer(word_boundaries.format(word=tgt_word), tgt_sent)
+                )[used_tgt_words[tgt_word]].span()
+            except IndexError:
+                used_tgt_words[tgt_word] = -1
+                return None
+            else:
+                return src_span, tgt_span
 
         # generate constraints
-        retval = []
         with open(src_path, "r") as src, open(tgt_path, "r") as tgt:
+            tokenizer = pyonmttok.Tokenizer(mode="aggressive")
             for idx, (src_sent, tgt_sent) in enumerate(zip(src, tgt)):
                 retval += ({},)
+                # used_{src,tgt}_words are dictionaries that are used
+                # for the storage of current index of some word in src/tgt sentence.
+                # it is useful for the case when we have non-singular number
+                # of some word in a sentence
                 used_src_words = defaultdict(int)
                 used_tgt_words = defaultdict(int)
-                for src_word in src_sent.split(" "):
-                    if src_word not in vocab:
+                tok_src_sent = tokenizer.tokenize(src_sent, as_token_objects=False)[0]
+                tok_tgt_sent = tokenizer.tokenize(tgt_sent, as_token_objects=False)[0]
+                for src_word in tok_src_sent:
+                    # 0-th index will contain non-lemmatized mappings from the vocab
+                    tgt_vocab_words = [{None}]
+                    # non-lemmatized word is present in the vocabulary
+                    if src_word in vocab:
+                        tgt_vocab_words[0] = vocab[src_word]
+                    # one of lemmas is present in the vocabulary
+                    elif lemmatize:
+                        # for some reason, our lemmatizer returns multiple lemmas for
+                        # a single word
+                        for src_word_lemma in src_lemmatizer.lemmatize(src_word):
+                            # src_word_lemma = src_word_lemma.decode()
+                            if src_word_lemma in vocab:
+                                tgt_vocab_words += (vocab[src_word_lemma],)
+
+                    if not tgt_vocab_words:
                         continue
-                    tgt_vocab_words = vocab[src_word]
-                    for tgt_word in tgt_sent.split(" "):
-                        ret_word = ""
-                        if tgt_word in tgt_vocab_words:
-                            spans = find_spans()
-                        if not spans and len(tgt_word) > word_size_threshold:
-                            for tgt_vocab_word in tgt_vocab_words:
-                                if len(tgt_vocab_word) > word_size_threshold and tgt_vocab_word in tgt_word:
-                                    spans = find_spans()
 
-                        if spans:
-                            retval[idx][spans] = ret_word
+                    for tgt_word in tok_tgt_sent:
+                        spans = ()
+                        # non-lemmatized
+                        if (
+                            tgt_word in tgt_vocab_words[0]
+                            and used_tgt_words[tgt_word] != -1
+                            and (spans := find_spans())
+                        ):
+                            if (
+                                (spans[1][0] - spans[0][0]) / len(tgt_sent)
+                                > distance_threshold
+                            ):
+                                continue
+                            add2retval(idx, tgt_word, spans)
+                            break
+                        # lemmatized
+                        elif lemmatize:
+                            if (
+                                any(
+                                    tgt_vocab_lemmas.intersection(
+                                        lemma
+                                        for lemma in tgt_lemmatizer.lemmatize(tgt_word)
+                                    )
+                                    for tgt_vocab_lemmas in tgt_vocab_words[1:]
+                                )
+                                and used_tgt_words[tgt_word] != -1
+                                and (spans := find_spans())
+                            ):
+                                if (
+                                    (spans[1][0] - spans[0][0]) / len(tgt_sent)
+                                    > distance_threshold
+                                ):
+                                    continue
+                                add2retval(idx, tgt_word, spans)
+                                break
 
-        if return_list:
-            return retval
-        string_io = StringIO()
-        for item in retval:
-            string_io.write(f"{item}\n")
-        string_io.seek(0)
         if constraints_file:
             with open(constraints_file, "w") as constraints:
-                constraints.write(string_io.read())
-            string_io.seek(0)
-        return TextIOWrapper(string_io)
+                constraints.write('\n'.join(str(line) for line in retval))
+        return retval
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    tokenize = parser.add_mutually_exclusive_group(required=True)
-    tokenize.add_argument("--tokenize", action="store_true")
-    tokenize.add_argument("--detokenize", action="store_true")
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument(
+        "--tokenize", action="store_true", help="Use this flag to tokenize a file"
+    )
+    action.add_argument(
+        "--detokenize", action="store_true", help="Use this flag to detokenize a file"
+    )
+    action.add_argument(
+        "--generate", action="store_true", help="Use this flag to generate constraints"
+    )
     parser.add_argument(
         "-s",
         "--src",
@@ -602,12 +704,22 @@ def parse_args():
         type=float,
         help="Sentence skip probability, for training only",
     )
-    parser.add_argument(
-        "-m", "--model", default=None, type=str, help="Path to SP model"
-    )
+    parser.add_argument("-m", "--model", default=None, type=str, help="Path to SP model")
     parser.add_argument("--add_in", action="store_true", default=False)
     parser.add_argument(
         "--no_case_feature", action="store_false", dest="case_feature", default=True
+    )
+    parser.add_argument(
+        "--constr_vocab",
+        default="",
+        type=str,
+        help="Path to the constraints vocabulary (bilingual word mappings)",
+    )
+    parser.add_argument(
+        "--constr_out",
+        default=sys.stdout,
+        type=str,
+        help="Path to the output constraints file",
     )
     return parser.parse_args()
 
@@ -622,5 +734,13 @@ if __name__ == "__main__":
         tokenizer.tokenize(
             args.src, args.tgt, args.constraints, args.wskip, args.sskip
         ) if args.constraints else tokenizer.tokenize(args.src, args.tgt)
+    elif args.generate:
+        if args.tgt is sys.stdout:
+            raise argparse.ArgumentError(
+                "Target file cannot be stdout when generating constraints"
+            )
+        tokenizer.generate_constraints(
+            args.src, args.tgt, args.constr_vocab, False, args.constr_out, True, True
+        )
     else:
         tokenizer.detokenize(args.src, args.tgt)
