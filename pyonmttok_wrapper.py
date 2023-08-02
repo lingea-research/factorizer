@@ -535,13 +535,17 @@ class PyonmttokWrapper:
             src_vocab_path = os.path.join(liblemm_path, f"lgmf_{src_lang}.lex")
             tgt_vocab_path = os.path.join(liblemm_path, f"lgmf_{tgt_lang}.lex")
             liblemm_iso_codes = os.path.join(liblemm_path, "liblemm_iso_codes.so")
-            src_lemmatizer = Lemmatizer(
-                src_lang, vocab=src_vocab_path, encoding="il2", path=liblemm_iso_codes
-            )
-            tgt_lemmatizer = Lemmatizer(
-                tgt_lang, vocab=tgt_vocab_path, encoding="il2", path=liblemm_iso_codes
-            )
-            lemmatize = True
+            try:
+                src_lemmatizer = Lemmatizer(
+                    src_lang, vocab=src_vocab_path, encoding="il2", path=liblemm_iso_codes
+                )
+                tgt_lemmatizer = Lemmatizer(
+                    tgt_lang, vocab=tgt_vocab_path, encoding="il2", path=liblemm_iso_codes
+                )
+            except:
+                pass
+            else:
+                lemmatize = True
 
         vocab = defaultdict(set)
 
