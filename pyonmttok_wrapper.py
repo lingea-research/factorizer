@@ -35,16 +35,12 @@ class PyonmttokWrapper:
         self.add_in = add_in
         self.reserved_symbols = reserved_symbols
 
-    @dispatch(str, str, str)
-    def tokenize(self, src_path: str, tgt_path: str, constr_path: str) -> None:
-        self.tokenize(open(src_path, "r"), open(tgt_path, "w"), open(constr_path, "r"))
-
     @dispatch(TextIOWrapper, TextIOWrapper, TextIOWrapper)
     def tokenize(
         self, src: TextIOWrapper, tgt: TextIOWrapper, constr: TextIOWrapper
     ) -> None:
         for s, c in zip(src, constr):
-            tgt.write(self.tokenize(s, [eval(c)]))
+            tgt.write(self.tokenize(s, eval(c)))
         src.close()
         tgt.close()
         constr.close()
@@ -63,6 +59,10 @@ class PyonmttokWrapper:
     @dispatch(str)
     def tokenize(self, src: str) -> str:
         return self.tokenize([src])[0]
+
+    @dispatch(str, dict)
+    def tokenize(self, src: str, constraints: dict[tuple[int, int], str]) -> str:
+        return self.tokenize([src], [constraints])[0]
 
     @dispatch(list)
     def tokenize(self, src: list[str]) -> list[str]:
@@ -359,12 +359,6 @@ class PyonmttokWrapper:
             retval += (f'{tokenized_joined}{nl if src[0].endswith((nl, cr)) else ""}',)
         return retval
 
-    @dispatch(list, list)
-    def tokenize(
-        self, src: list[str], constraints: list[dict[tuple[int, int], str]]
-    ) -> list[str]:
-        return self.tokenize(src, constraints)
-
     @dispatch(str, str)
     def detokenize(self, src_path: str, tgt_path: str) -> None:
         """Detokenizes the source file
@@ -489,8 +483,8 @@ class PyonmttokWrapper:
         tgt_path: str,
         vocab_path: str,
         constraints_file: str = "",
-        wskip: float = 0.1,
-        wrand: float = 0.1,
+        wskip: float = 0.0,
+        wrand: float = 0.0,
         sskip: float = 0.0,
         use_lemmatization: bool = True,
         distance_threshold: float = 0.4,
@@ -696,7 +690,7 @@ def parse_args():
     parser.add_argument(
         "-c",
         "--constraints",
-        dest="cosntraints_path",
+        dest="constraints_path",
         default="",
         type=str,
         help="Path to the constraints file",
@@ -762,20 +756,17 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     tokenizer = PyonmttokWrapper(
-        model=args.model, add_in=args.add_in, case_feature=args.case_feature
+        model=args.model_path, add_in=args.add_in, case_feature=args.case_feature
     )
-    if args.tokenize:
-        tokenizer.tokenize(
-            args.src, args.tgt, args.constraints
-        ) if args.constraints else tokenizer.tokenize(args.src, args.tgt)
-    elif args.generate:
-        if args.tgt is sys.stdout:
+    # convert i/o to TextIOWrappers
+    if args.generate:
+        if args.tgt_path is sys.stdout:
             raise argparse.ArgumentError(
                 "Target file cannot be stdout when generating constraints"
             )
         tokenizer.generate_constraints(
-            src_path=args.src,
-            tgt_path=args.tgt,
+            src_path=args.src_path,
+            tgt_path=args.tgt_path,
             vocab_path=args.constr_vocab,
             wskip=args.wskip,
             wrand=args.wrand,
@@ -786,4 +777,31 @@ if __name__ == "__main__":
             liblemm_path="lib",
         )
     else:
-        tokenizer.detokenize(args.src, args.tgt)
+        src = open(args.src_path, 'r') if args.src_path is not sys.stdin else sys.stdin
+        tgt = open(args.tgt_path, 'w') if args.tgt_path is not sys.stdout else sys.stdout
+        if args.tokenize:
+            constraints = open(args.constraints_path, 'r')
+            tokenizer.tokenize(
+                src, tgt, constraints
+            ) if args.constraints_path else tokenizer.tokenize(src, tgt)
+        else:
+            tokenizer.detokenize(src, tgt)
+    # elif args.generate:
+    #     if args.tgt_path is sys.stdout:
+    #         raise argparse.ArgumentError(
+    #             "Target file cannot be stdout when generating constraints"
+    #         )
+    #     tokenizer.generate_constraints(
+    #         src_path=args.src_path,
+    #         tgt_path=args.tgt_path,
+    #         vocab_path=args.constr_vocab,
+    #         wskip=args.wskip,
+    #         wrand=args.wrand,
+    #         sskip=args.sskip,
+    #         use_lemmatization=True,
+    #         src_lang=args.src_lang,
+    #         tgt_lang=args.tgt_lang,
+    #         liblemm_path="lib",
+    #     )
+    # elif args.detokenize:
+    #     tokenizer.detokenize(args.src_path, args.tgt_path)
