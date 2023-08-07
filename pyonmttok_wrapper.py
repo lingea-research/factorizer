@@ -11,7 +11,6 @@ import sys
 import os
 import codecs
 import random
-import json
 from multipledispatch import dispatch
 
 from utils.lemmatizer import Lemmatizer
@@ -36,42 +35,23 @@ class PyonmttokWrapper:
         self.add_in = add_in
         self.reserved_symbols = reserved_symbols
 
-    @dispatch(str, str, str, float, float)
-    def tokenize(
-        self, src_path: str, tgt_path: str, constr_path: str, wskip: float, sskip: float
-    ) -> None:
-        self.tokenize(
-            open(src_path, "r"), open(tgt_path, "w"), open(constr_path), wskip, sskip
-        )
-
     @dispatch(str, str, str)
     def tokenize(self, src_path: str, tgt_path: str, constr_path: str) -> None:
-        self.tokenize(open(src_path, "r"), open(tgt_path, "w"), open(constr_path, "w"))
-
-    @dispatch(str, str)
-    def tokenize(self, src_path: str, tgt_path: str) -> None:
-        self.tokenize(open(src_path, "r"), open(tgt_path, "w"))
-
-    @dispatch(TextIOWrapper, TextIOWrapper, TextIOWrapper, float, float)
-    def tokenize(
-        self,
-        src: TextIOWrapper,
-        tgt: TextIOWrapper,
-        constr: TextIOWrapper,
-        wskip: float,
-        sskip: float,
-    ) -> None:
-        for s, c in zip(src, constr):
-            tgt.write(self.tokenize(s, [eval(c)], wskip, sskip))
-        src.close()
-        tgt.close()
-        constr.close()
+        self.tokenize(open(src_path, "r"), open(tgt_path, "w"), open(constr_path, "r"))
 
     @dispatch(TextIOWrapper, TextIOWrapper, TextIOWrapper)
     def tokenize(
         self, src: TextIOWrapper, tgt: TextIOWrapper, constr: TextIOWrapper
     ) -> None:
-        self.tokenize(src, tgt, constr, 0.0, 0.0)
+        for s, c in zip(src, constr):
+            tgt.write(self.tokenize(s, [eval(c)]))
+        src.close()
+        tgt.close()
+        constr.close()
+
+    @dispatch(str, str)
+    def tokenize(self, src_path: str, tgt_path: str) -> None:
+        self.tokenize(open(src_path, "r"), open(tgt_path, "w"))
 
     @dispatch(TextIOWrapper, TextIOWrapper)
     def tokenize(self, src: TextIOWrapper, tgt: TextIOWrapper) -> None:
@@ -247,21 +227,33 @@ class PyonmttokWrapper:
             retval += (f'{tokenized_joined}{nl if sent.endswith((nl, cr)) else ""}',)
         return retval
 
-    @dispatch(list, list, float, float)
+    @dispatch(list, list, list)
     def tokenize(
         self,
         src: list[str],
-        constraints: list[dict[tuple[int, int], list[str]]],
-        wskip: float,
-        sskip: float,
+        tgt: list[str],
+        constraints: list[dict[tuple[tuple[int, int], tuple[int, int]], str]],
+    ) -> tuple[list[str], list[str]]:
+        def generate_tuples(
+            constraints: list[dict[tuple[tuple[int, int], tuple[int, int]], str]],
+            idx: int,
+        ) -> Iterable[tuple[tuple[int, int], tuple[int, int]]]:
+            for constraint in constraints:
+                yield tuple({c[0][idx]: c[1]} for c in constraint.items())
+
+        src_constraints = generate_tuples(constraints, 0)
+        # tgt_constraints = generate_tuples(constraints, 1)  # if we should use it in tgt?
+        return self.tokenize(src, src_constraints), self.tokenize(tgt)
+
+    @dispatch(list, list)
+    def tokenize(
+        self, src: list[str], constraints: list[dict[tuple[int, int], str]]
     ) -> list[str]:
         """Tokenizes the input with constraints
 
         Args:
             src (list): list of raw source sentences
             constraints (list): list of constraints of shape (range -> constraint)
-            wskip (float): probability of a word skip
-            sskip (float): probability of a sentence skip
 
         Returns:
             output (list): tokenized sentences
@@ -308,13 +300,12 @@ class PyonmttokWrapper:
         def generate_tokenized() -> Iterable[str]:
             add_space = True
             byte_seq_pattern = r"^<[\d\#]>$"
-            skip_sent = sskip > random.random()
             for s, c in zip(slice_tokenized, constr_tokenized):
                 if not s:
                     add_space = True
                     continue
                 # if constraint -> join both
-                if c and not skip_sent and wskip < random.random():
+                if c:
                     s = " ".join(
                         [
                             *[
@@ -370,9 +361,9 @@ class PyonmttokWrapper:
 
     @dispatch(list, list)
     def tokenize(
-        self, src: list[str], constraints: list[dict[tuple[int, int], list[str]]]
+        self, src: list[str], constraints: list[dict[tuple[int, int], str]]
     ) -> list[str]:
-        return self.tokenize(src, constraints, 0.0, 0.0)
+        return self.tokenize(src, constraints)
 
     @dispatch(str, str)
     def detokenize(self, src_path: str, tgt_path: str) -> None:
@@ -498,7 +489,9 @@ class PyonmttokWrapper:
         tgt_path: str,
         vocab_path: str,
         constraints_file: str = "",
-        noisify: bool = True,
+        wskip: float = 0.1,
+        wrand: float = 0.1,
+        sskip: float = 0.0,
         use_lemmatization: bool = True,
         distance_threshold: float = 0.4,
         src_lang: str = "",
@@ -512,7 +505,6 @@ class PyonmttokWrapper:
             tgt_path (str): path to the target file
             vocab_path (str): path to the bilingual dictionary
             constraints_file (str): file path to a file with resulting constraints
-            noisify (bool): noisify the substitutions
             use_lemmatization (bool): add lemmatized versions to the dictionary and
               source/target sentences
             distance_threshold (float): distance threshold
@@ -563,23 +555,26 @@ class PyonmttokWrapper:
         retval = []
 
         def add2retval(
-            idx: int, tgt_word: str, spans: tuple[tuple[int, int], tuple[int, int]]
+            idx: int,
+            src_word: str,
+            tgt_word: str,
+            spans: tuple[tuple[int, int], tuple[int, int]],
         ) -> None:
-            if noisify:
+            if wskip or wrand:
                 # Esentially the same noisification as the one in the MLM
-                # 10% - do nothing
-                # 10% - random token from vocab
-                # 80% - normal substitution
+                # wskip (10% by default) - do nothing
+                # wrand (10% by default) - random token from the vocab
+                # other - normal substitution
                 dice_roll = random.uniform(0, 1)
-                if dice_roll < 0.1:
+                if wskip and dice_roll < wskip:
                     return
-                elif dice_roll < 0.2:
+                elif wrand and dice_roll < wskip + wrand:
                     random_values = random.choice(list(vocab.values()))
-                    retval[idx][spans] = random.choice(list(random_values))
+                    retval[idx][spans[0]] = random.choice(list(random_values))
                 else:
-                    retval[idx][spans] = tgt_word
+                    retval[idx][spans[0]] = tgt_word
             else:
-                retval[idx][spans] = tgt_word
+                retval[idx][spans[0]] = tgt_word
             used_src_words[src_word] += 1
             used_tgt_words[tgt_word] += 1
 
@@ -603,6 +598,8 @@ class PyonmttokWrapper:
             tokenizer = pyonmttok.Tokenizer(mode="aggressive")
             for idx, (src_sent, tgt_sent) in enumerate(zip(src, tgt)):
                 retval += ({},)
+                if sskip and random.uniform() < sskip:
+                    continue
                 # used_{src,tgt}_words are dictionaries that are used
                 # for the storage of current index of some word in src/tgt sentence.
                 # it is useful for the case when we have non-singular number
@@ -622,7 +619,6 @@ class PyonmttokWrapper:
                         # for some reason, our lemmatizer returns multiple lemmas for
                         # a single word
                         for src_word_lemma in src_lemmatizer.lemmatize(src_word):
-                            # src_word_lemma = src_word_lemma.decode()
                             if src_word_lemma in vocab:
                                 tgt_vocab_words += (vocab[src_word_lemma],)
 
@@ -637,12 +633,11 @@ class PyonmttokWrapper:
                             and used_tgt_words[tgt_word] != -1
                             and (spans := find_spans())
                         ):
-                            if (
-                                (spans[1][0] - spans[0][0]) / len(tgt_sent)
-                                > distance_threshold
-                            ):
+                            if (spans[1][0] - spans[0][0]) / len(
+                                tgt_sent
+                            ) > distance_threshold:
                                 continue
-                            add2retval(idx, tgt_word, spans)
+                            add2retval(idx, src_word, tgt_word, spans)
                             break
                         # lemmatized
                         elif lemmatize:
@@ -657,17 +652,16 @@ class PyonmttokWrapper:
                                 and used_tgt_words[tgt_word] != -1
                                 and (spans := find_spans())
                             ):
-                                if (
-                                    (spans[1][0] - spans[0][0]) / len(tgt_sent)
-                                    > distance_threshold
-                                ):
+                                if (spans[1][0] - spans[0][0]) / len(
+                                    tgt_sent
+                                ) > distance_threshold:
                                     continue
-                                add2retval(idx, tgt_word, spans)
+                                add2retval(idx, src_word, tgt_word, spans)
                                 break
 
         if constraints_file:
             with open(constraints_file, "w") as constraints:
-                constraints.write('\n'.join(str(line) for line in retval))
+                constraints.write("\n".join(str(line) for line in retval))
         return retval
 
 
@@ -686,29 +680,65 @@ def parse_args():
     parser.add_argument(
         "-s",
         "--src",
+        dest="src_path",
         default=sys.stdin,
         type=str,
         help="Either a path to source file or string to be processed",
     )
     parser.add_argument(
-        "-t", "--tgt", default=sys.stdout, type=str, help="Path to target file"
+        "-t",
+        "--tgt",
+        dest="tgt_path",
+        default=sys.stdout,
+        type=str,
+        help="Path to target file",
     )
     parser.add_argument(
-        "-c", "--constraints", default="", type=str, help="Path to constraints file"
+        "-c",
+        "--constraints",
+        dest="cosntraints_path",
+        default="",
+        type=str,
+        help="Path to the constraints file",
+    )
+    parser.add_argument(
+        "--src_lang",
+        default="",
+        type=str,
+        help="Source language (this parameter is required for the constraints generation only)",
+    )
+    parser.add_argument(
+        "--tgt_lang",
+        default="",
+        type=str,
+        help="Target language (this parameter is required for the constraints generation only)",
     )
     parser.add_argument(
         "--wskip",
         default=0.0,
         type=float,
-        help="Word skip probability, for training only",
+        help="Word skip probability, for training data modification only",
+    )
+    parser.add_argument(
+        "--wrand",
+        default=0.0,
+        type=float,
+        help="Random substitution probability, for training data modification only",
     )
     parser.add_argument(
         "--sskip",
         default=0.0,
         type=float,
-        help="Sentence skip probability, for training only",
+        help="Sentence skip probability, for training data modification only",
     )
-    parser.add_argument("-m", "--model", default=None, type=str, help="Path to SP model")
+    parser.add_argument(
+        "-m",
+        "--model",
+        dest="model_path",
+        default=None,
+        type=str,
+        help="Path to SP model",
+    )
     parser.add_argument("--add_in", action="store_true", default=False)
     parser.add_argument(
         "--no_case_feature", action="store_false", dest="case_feature", default=True
@@ -736,7 +766,7 @@ if __name__ == "__main__":
     )
     if args.tokenize:
         tokenizer.tokenize(
-            args.src, args.tgt, args.constraints, args.wskip, args.sskip
+            args.src, args.tgt, args.constraints
         ) if args.constraints else tokenizer.tokenize(args.src, args.tgt)
     elif args.generate:
         if args.tgt is sys.stdout:
@@ -744,7 +774,16 @@ if __name__ == "__main__":
                 "Target file cannot be stdout when generating constraints"
             )
         tokenizer.generate_constraints(
-            args.src, args.tgt, args.constr_vocab, False, args.constr_out, True, True
+            src_path=args.src,
+            tgt_path=args.tgt,
+            vocab_path=args.constr_vocab,
+            wskip=args.wskip,
+            wrand=args.wrand,
+            sskip=args.sskip,
+            use_lemmatization=True,
+            src_lang=args.src_lang,
+            tgt_lang=args.tgt_lang,
+            liblemm_path="lib",
         )
     else:
         tokenizer.detokenize(args.src, args.tgt)
