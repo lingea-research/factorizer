@@ -482,7 +482,7 @@ class PyonmttokWrapper:
         src_path: str,
         tgt_path: str,
         vocab_path: str,
-        constraints_file: str = "",
+        constraints_path: str = "",
         wskip: float = 0.0,
         wrand: float = 0.0,
         sskip: float = 0.0,
@@ -498,7 +498,7 @@ class PyonmttokWrapper:
             src_path (str): path to the source file
             tgt_path (str): path to the target file
             vocab_path (str): path to the bilingual dictionary
-            constraints_file (str): file path to a file with resulting constraints
+            constraints_path (str): file path to a file with resulting constraints
             use_lemmatization (bool): add lemmatized versions to the dictionary and
               source/target sentences
             distance_threshold (float): distance threshold
@@ -592,7 +592,7 @@ class PyonmttokWrapper:
             tokenizer = pyonmttok.Tokenizer(mode="aggressive")
             for idx, (src_sent, tgt_sent) in enumerate(zip(src, tgt)):
                 retval += ({},)
-                if sskip and random.uniform() < sskip:
+                if sskip and random.uniform(0, 1) < sskip:
                     continue
                 # used_{src,tgt}_words are dictionaries that are used
                 # for the storage of current index of some word in src/tgt sentence.
@@ -653,8 +653,8 @@ class PyonmttokWrapper:
                                 add2retval(idx, src_word, tgt_word, spans)
                                 break
 
-        if constraints_file:
-            with open(constraints_file, "w") as constraints:
+        if constraints_path:
+            with open(constraints_path, "w") as constraints:
                 constraints.write("\n".join(str(line) for line in retval))
         return retval
 
@@ -739,6 +739,7 @@ def parse_args():
     )
     parser.add_argument(
         "--constr_vocab",
+        dest="constraints_vocab_path",
         default="",
         type=str,
         help="Path to the constraints vocabulary (bilingual word mappings)",
@@ -767,7 +768,8 @@ if __name__ == "__main__":
         tokenizer.generate_constraints(
             src_path=args.src_path,
             tgt_path=args.tgt_path,
-            vocab_path=args.constr_vocab,
+            vocab_path=args.constraints_vocab_path,
+            constraints_path=args.constraints_path,
             wskip=args.wskip,
             wrand=args.wrand,
             sskip=args.sskip,
