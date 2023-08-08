@@ -777,31 +777,16 @@ if __name__ == "__main__":
             liblemm_path="lib",
         )
     else:
-        src = open(args.src_path, 'r') if args.src_path is not sys.stdin else sys.stdin
-        tgt = open(args.tgt_path, 'w') if args.tgt_path is not sys.stdout else sys.stdout
-        if args.tokenize:
-            constraints = open(args.constraints_path, 'r')
-            tokenizer.tokenize(
-                src, tgt, constraints
-            ) if args.constraints_path else tokenizer.tokenize(src, tgt)
-        else:
-            tokenizer.detokenize(src, tgt)
-    # elif args.generate:
-    #     if args.tgt_path is sys.stdout:
-    #         raise argparse.ArgumentError(
-    #             "Target file cannot be stdout when generating constraints"
-    #         )
-    #     tokenizer.generate_constraints(
-    #         src_path=args.src_path,
-    #         tgt_path=args.tgt_path,
-    #         vocab_path=args.constr_vocab,
-    #         wskip=args.wskip,
-    #         wrand=args.wrand,
-    #         sskip=args.sskip,
-    #         use_lemmatization=True,
-    #         src_lang=args.src_lang,
-    #         tgt_lang=args.tgt_lang,
-    #         liblemm_path="lib",
-    #     )
-    # elif args.detokenize:
-    #     tokenizer.detokenize(args.src_path, args.tgt_path)
+        with open(
+            args.src_path, "r"
+        ) if args.src_path is not sys.stdin else sys.stdin as src, open(
+            args.tgt_path, "w"
+        ) if args.tgt_path is not sys.stdout else sys.stdout as tgt, open(
+            args.constraints_path, "r"
+        ) if args.constraints_path else sys.stdin as constraints:
+            if args.tokenize:
+                tokenizer.tokenize(
+                    src, tgt, constraints
+                ) if args.constraints_path else tokenizer.tokenize(src, tgt)
+            else:
+                tokenizer.detokenize(src, tgt)
