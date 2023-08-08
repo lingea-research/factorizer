@@ -8,10 +8,7 @@ def demo():
 	constr = [{(0,4): 'posledni', (5,11): 'Patek', (12,13): 'Ja', (13,14): '嘚', (37,41): 'modry'}, {(6,14): 'stavba', (0,1): '«', (23,24): '»'}]
 	print('Input:', input)
 	print('Constraints:', constr)
-	wskip = 0.2
-	sskip = 0.5
 	tokenized = tokenizer.tokenize(input, constr)
-	tokenized = tokenizer.tokenize(input, constr, wskip, sskip)
 	print('Tokenized with constraints:', tokenized)
 	tokenized = tokenizer.tokenize(input)
 	print('Tokenized without constraints:', tokenized)
