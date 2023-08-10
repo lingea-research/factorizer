@@ -235,6 +235,7 @@ class PyonmttokWrapper:
         tgt: list[str],
         constraints: list[dict[tuple[tuple[int, int], tuple[int, int]], str]],
     ) -> tuple[list[str], list[str]]:
+
         def generate_tuples(
             constraints: list[dict[tuple[tuple[int, int], tuple[int, int]], str]],
             idx: int,
@@ -548,8 +549,9 @@ class PyonmttokWrapper:
                 vocab[src_word].add(tgt_word)
                 if lemmatize:
                     for src_word_lemma in src_lemmatizer.lemmatize(src_word):
+                        src_word_lemma = src_word_lemma.decode()
                         vocab[src_word_lemma] = vocab[src_word_lemma].union(
-                            tgt_lemmatizer.lemmatize(tgt_word)
+                            tgt_word_lemma.decode() for tgt_word_lemma in tgt_lemmatizer.lemmatize(tgt_word)
                         )
 
         retval = []
@@ -598,13 +600,21 @@ class PyonmttokWrapper:
         constr_out = (
             open(constraints_path, "w")
             if constraints_path is not sys.stdout
-            else sys.stdout if constraints_path else None
+            else sys.stdout
+            if constraints_path
+            else None
         )
         with open(src_path, "r") as src, open(tgt_path, "r") as tgt, pb as progress_bar:
             tokenizer = pyonmttok.Tokenizer(mode="aggressive")
             for idx, (src_sent, tgt_sent) in enumerate(zip(src, tgt)):
                 rv = {}
                 if sskip and random.uniform(0.0, 1.0) < sskip:
+                    if return_list:
+                        retval += (rv,)
+                    else:
+                        constr_out.write(
+                            f"{str(rv)}{nl if nl in src_sent or nl in tgt_sent else ''}"
+                        )
                     continue
                 # used_{src,tgt}_words are dictionaries that are used
                 # for the storage of current index of some word in src/tgt sentence.
@@ -626,7 +636,7 @@ class PyonmttokWrapper:
                         # for some reason, our lemmatizer returns multiple lemmas for
                         # a single word
                         for src_word_lemma in src_lemmatizer.lemmatize(src_word):
-                            if src_word_lemma in vocab:
+                            if (src_word_lemma := src_word_lemma.decode()) in vocab:
                                 tgt_vocab_words += (vocab[src_word_lemma],)
                     # check if all mapping sets are empty
                     if not any(tgt_vocab_words):
@@ -645,7 +655,7 @@ class PyonmttokWrapper:
                             lemmatize
                             and any(
                                 tgt_vocab_lemmas.intersection(
-                                    lemma for lemma in tgt_lemmatizer.lemmatize(tgt_word)
+                                    lemma.decode() for lemma in tgt_lemmatizer.lemmatize(tgt_word)
                                 )
                                 for tgt_vocab_lemmas in tgt_vocab_words[1:]
                             )
@@ -654,10 +664,12 @@ class PyonmttokWrapper:
                                 tgt_word, len(tgt_sent), src_span, tgt_span
                             ):
                                 rv[src_span] = constraint
-                if constraints_path:
-                    constr_out.write(f"{str(rv)}{nl if nl in src_sent else ''}")
                 if return_list:
                     retval += (rv,)
+                else:
+                    constr_out.write(
+                        f"{str(rv)}{nl if nl in src_sent or nl in tgt_sent else ''}"
+                    )
                 progress_bar.update(idx + 1 - progress_bar.n)
         if constr_out and constr_out is not sys.stdout:
             constr_out.close()
@@ -776,6 +788,7 @@ if __name__ == "__main__":
             tgt_path=args.tgt_path,
             vocab_path=args.constraints_vocab_path,
             constraints_path=args.constraints_path,
+            return_list=False,
             wskip=args.wskip,
             wrand=args.wrand,
             sskip=args.sskip,
