@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 
 import argparse
-from typing import Iterable, Union
+from typing import Iterable, Optional
 import pyonmttok
 from collections import defaultdict
 from itertools import takewhile, islice
 import re
-from io import TextIOWrapper, StringIO
+from io import TextIOWrapper
 import sys
+from tqdm import tqdm
 import os
 import codecs
 import random
@@ -482,7 +483,8 @@ class PyonmttokWrapper:
         src_path: str,
         tgt_path: str,
         vocab_path: str,
-        constraints_path: str = "",
+        constraints_path: str,
+        return_list: bool = True,
         wskip: float = 0.0,
         wrand: float = 0.0,
         sskip: float = 0.0,
@@ -491,7 +493,7 @@ class PyonmttokWrapper:
         src_lang: str = "",
         tgt_lang: str = "",
         liblemm_path: str = "lib",
-    ) -> Union[StringIO, list[dict[tuple[int, int], str]]]:
+    ) -> Optional[list[dict[tuple[int, int], str]]]:
         """Generates the list of constraints
 
         Args:
@@ -499,25 +501,29 @@ class PyonmttokWrapper:
             tgt_path (str): path to the target file
             vocab_path (str): path to the bilingual dictionary
             constraints_path (str): file path to a file with resulting constraints
-            use_lemmatization (bool): add lemmatized versions to the dictionary and
-              source/target sentences
+            return_list (bool): if we want to return a list of constraints
+            wskip (float): probability of word substitution skip
+            wrand (float): probability of word substitution randomization
+            sskip (float): probability of sentence skip
+              (leave it with the empty dict of constraints)
             distance_threshold (float): distance threshold
               (1.0 == length of target sentence) between matched words
-            liblemm_path (str): path to the folder with vocabularies
-              and language codes (lingea)
+            use_lemmatization (bool): add lemmatized versions to the dictionary and
+              source/target sentences
             src_lang (str): iso code of the source language
             tgt_lang (str): iso code of the target language
-
+            liblemm_path (str): path to the folder with vocabularies
+              and language codes (lingea)
         Returns:
-            constraints (dict|TextIO): list of ranges with corresponding words
+            constraints (list): list of ranges with corresponding words
         """
 
         lemmatize = False
         if use_lemmatization and os.path.exists(liblemm_path):
             if not all((src_lang, tgt_lang)):
-                src_lang, tgt_lang = vocab_path.rsplit(".", 1)[1].split(
-                    ("-", "_", ",", ":")
-                )
+                vocab_langs = vocab_path.rsplit(".", 1)[1]
+                src_lang = vocab_langs[:2]
+                tgt_lang = vocab_langs[-2:]
             src_vocab_path = os.path.join(liblemm_path, f"lgmf_{src_lang}.lex")
             tgt_vocab_path = os.path.join(liblemm_path, f"lgmf_{tgt_lang}.lex")
             liblemm_iso_codes = os.path.join(liblemm_path, "liblemm_iso_codes.so")
@@ -548,115 +554,115 @@ class PyonmttokWrapper:
 
         retval = []
 
-        def add2retval(
-            idx: int,
-            src_word: str,
+        def find_span(
+            word: str, sent: str, used_words: dict[str, int]
+        ) -> Optional[tuple[int, int]]:
+            if used_words[word] == -1:
+                return None
+            try:
+                span = list(
+                    re.finditer(
+                        r"(?<![\w_]){word}(?![\w_])".format(word=re.escape(word)), sent
+                    )
+                )[used_words[word]].span()
+            except IndexError:
+                used_words[word] = -1
+                return None
+            return span
+
+        def process_constr(
             tgt_word: str,
-            spans: tuple[tuple[int, int], tuple[int, int]],
-        ) -> None:
+            tgt_sent_length: int,
+            src_span: tuple[int, int],
+            tgt_span: tuple[int, int],
+        ) -> Optional[str]:
+            if abs(tgt_span[0] - src_span[0]) / tgt_sent_length > distance_threshold:
+                return None
             if wskip or wrand:
                 # Esentially the same noisification as the one in the MLM
                 # wskip (10% by default) - do nothing
                 # wrand (10% by default) - random token from the vocab
                 # other - normal substitution
-                dice_roll = random.uniform(0, 1)
+                dice_roll = random.uniform(0.0, 1.0)
                 if wskip and dice_roll < wskip:
-                    return
+                    return None
                 elif wrand and dice_roll < wskip + wrand:
                     random_values = random.choice(list(vocab.values()))
-                    retval[idx][spans[0]] = random.choice(list(random_values))
-                else:
-                    retval[idx][spans[0]] = tgt_word
-            else:
-                retval[idx][spans[0]] = tgt_word
-            used_src_words[src_word] += 1
-            used_tgt_words[tgt_word] += 1
+                    return random.choice(list(random_values))
+            return tgt_word
 
-        def find_spans():
-            word_boundaries = r"(?<![\w_]){word}(?![\w_])"
-            src_span = list(re.finditer(word_boundaries.format(word=src_word), src_sent))[
-                used_src_words[src_word]
-            ].span()
-            try:
-                tgt_span = list(
-                    re.finditer(word_boundaries.format(word=tgt_word), tgt_sent)
-                )[used_tgt_words[tgt_word]].span()
-            except IndexError:
-                used_tgt_words[tgt_word] = -1
-                return None
-            else:
-                return src_span, tgt_span
-
+        # count lines and initialize the tqdm progress bar
+        with open(src_path) as src:
+            pb = tqdm(total=sum(1 for _ in src))
         # generate constraints
-        with open(src_path, "r") as src, open(tgt_path, "r") as tgt:
+        constr_out = (
+            open(constraints_path, "w")
+            if constraints_path is not sys.stdout
+            else sys.stdout if constraints_path else None
+        )
+        with open(src_path, "r") as src, open(tgt_path, "r") as tgt, pb as progress_bar:
             tokenizer = pyonmttok.Tokenizer(mode="aggressive")
             for idx, (src_sent, tgt_sent) in enumerate(zip(src, tgt)):
-                retval += ({},)
-                if sskip and random.uniform(0, 1) < sskip:
+                rv = {}
+                if sskip and random.uniform(0.0, 1.0) < sskip:
                     continue
                 # used_{src,tgt}_words are dictionaries that are used
                 # for the storage of current index of some word in src/tgt sentence.
                 # it is useful for the case when we have non-singular number
                 # of some word in a sentence
-                used_src_words = defaultdict(int)
-                used_tgt_words = defaultdict(int)
+                src_used_words = defaultdict(int)
+                tgt_used_words = defaultdict(int)
                 tok_src_sent = tokenizer.tokenize(src_sent, as_token_objects=False)[0]
                 tok_tgt_sent = tokenizer.tokenize(tgt_sent, as_token_objects=False)[0]
                 for src_word in tok_src_sent:
-                    # 0-th index will contain non-lemmatized mappings from the vocab
-                    tgt_vocab_words = [{None}]
+                    # set at the 0-th index will contain
+                    # non-lemmatized mappings from the vocab
+                    tgt_vocab_words = [set()]
                     # non-lemmatized word is present in the vocabulary
                     if src_word in vocab:
                         tgt_vocab_words[0] = vocab[src_word]
-                    # one of lemmas is present in the vocabulary
+                    # if any of lemmas are present in the vocabulary
                     elif lemmatize:
                         # for some reason, our lemmatizer returns multiple lemmas for
                         # a single word
                         for src_word_lemma in src_lemmatizer.lemmatize(src_word):
                             if src_word_lemma in vocab:
                                 tgt_vocab_words += (vocab[src_word_lemma],)
-
-                    if not tgt_vocab_words:
+                    # check if all mapping sets are empty
+                    if not any(tgt_vocab_words):
+                        continue
+                    # can't find word/no word to map
+                    if not (src_span := find_span(src_word, src_sent, src_used_words)):
                         continue
 
                     for tgt_word in tok_tgt_sent:
-                        spans = ()
-                        # non-lemmatized
-                        if (
-                            tgt_word in tgt_vocab_words[0]
-                            and used_tgt_words[tgt_word] != -1
-                            and (spans := find_spans())
+                        # get span
+                        if not (
+                            tgt_span := find_span(tgt_word, tgt_sent, tgt_used_words)
                         ):
-                            if (spans[1][0] - spans[0][0]) / len(
-                                tgt_sent
-                            ) > distance_threshold:
-                                continue
-                            add2retval(idx, src_word, tgt_word, spans)
-                            break
-                        # lemmatized
-                        elif lemmatize:
-                            if (
-                                any(
-                                    tgt_vocab_lemmas.intersection(
-                                        lemma
-                                        for lemma in tgt_lemmatizer.lemmatize(tgt_word)
-                                    )
-                                    for tgt_vocab_lemmas in tgt_vocab_words[1:]
+                            continue
+                        if tgt_word in tgt_vocab_words[0] or (
+                            lemmatize
+                            and any(
+                                tgt_vocab_lemmas.intersection(
+                                    lemma for lemma in tgt_lemmatizer.lemmatize(tgt_word)
                                 )
-                                and used_tgt_words[tgt_word] != -1
-                                and (spans := find_spans())
+                                for tgt_vocab_lemmas in tgt_vocab_words[1:]
+                            )
+                        ):
+                            if constraint := process_constr(
+                                tgt_word, len(tgt_sent), src_span, tgt_span
                             ):
-                                if (spans[1][0] - spans[0][0]) / len(
-                                    tgt_sent
-                                ) > distance_threshold:
-                                    continue
-                                add2retval(idx, src_word, tgt_word, spans)
-                                break
-
-        if constraints_path:
-            with open(constraints_path, "w") as constraints:
-                constraints.write("\n".join(str(line) for line in retval))
-        return retval
+                                rv[src_span] = constraint
+                if constraints_path:
+                    constr_out.write(f"{str(rv)}{nl if nl in src_sent else ''}")
+                if return_list:
+                    retval += (rv,)
+                progress_bar.update(idx + 1 - progress_bar.n)
+        if constr_out and constr_out is not sys.stdout:
+            constr_out.close()
+        if return_list:
+            return retval
 
 
 def parse_args():
@@ -689,9 +695,9 @@ def parse_args():
     )
     parser.add_argument(
         "-c",
-        "--constraints",
+        "--constr",
         dest="constraints_path",
-        default="",
+        default=sys.stdout,
         type=str,
         help="Path to the constraints file",
     )
@@ -785,7 +791,7 @@ if __name__ == "__main__":
             args.tgt_path, "w"
         ) if args.tgt_path is not sys.stdout else sys.stdout as tgt, open(
             args.constraints_path, "r"
-        ) if args.constraints_path else sys.stdin as constraints:
+        ) if args.constraints_path is not sys.stdout else sys.stdin as constraints:
             if args.tokenize:
                 tokenizer.tokenize(
                     src, tgt, constraints
