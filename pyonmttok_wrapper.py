@@ -79,7 +79,7 @@ class PyonmttokWrapper:
         src_iter, src_iter_copy = tee(iter(src))
         n_lines = count_lines(src_iter_copy)
         for src_sent, constraint in wrap_tqdm(
-            zip(src_iter, constraints), desc=f"Tokenizing {src.name}", n_lines=n_lines
+            to_be_wrapped=zip(src_iter, constraints), desc=f"Tokenizing {src.name}", n_lines=n_lines
         ):
             tgt.write(self.tokenize(src_sent, eval(constraint)))
         src.close()
@@ -95,7 +95,7 @@ class PyonmttokWrapper:
         src_iter, src_iter_copy = tee(iter(src))
         n_lines = count_lines(src_iter_copy)
         for src_sent in wrap_tqdm(
-            src_iter, desc=f"Tokenizing {src.name}", n_lines=n_lines
+            to_be_wrapped=src_iter, desc=f"Tokenizing {src.name}", n_lines=n_lines
         ):
             tgt.write(self.tokenize(src_sent))
         src.close()
@@ -409,7 +409,7 @@ class PyonmttokWrapper:
     def detokenize(self, src: TextIOWrapper, tgt: TextIOWrapper) -> None:
         src_iter, src_iter_copy = tee(iter(src))
         n_lines = count_lines(src_iter_copy)
-        for src_sent in wrap_tqdm(src_iter, desc=f"Detokenizing {src.name}", n_lines=n_lines):
+        for src_sent in wrap_tqdm(to_be_wrapped=src_iter, desc=f"Detokenizing {src.name}", n_lines=n_lines):
             tgt.write(self.detokenize(src_sent))
         src.close()
         tgt.close()
@@ -650,9 +650,9 @@ class PyonmttokWrapper:
             n_lines = count_lines(src_iter_copy)
             tokenizer = pyonmttok.Tokenizer(mode="aggressive")
             for src_sent, tgt_sent in wrap_tqdm(
-                zip(src_iter, tgt),
+                to_be_wrapped=zip(src_iter, tgt),
                 desc=f"Generating constraints for {src.name}",
-                n_lines=n_lines,
+                n_lines=n_lines
             ):
                 rv = {}
                 if sskip and random.uniform(0.0, 1.0) < sskip:
@@ -757,7 +757,7 @@ def parse_args():
         "-c",
         "--constr",
         dest="constraints_path",
-        default=sys.stdout,
+        default='',
         type=str,
         help="Path to the constraints file",
     )
@@ -830,6 +830,8 @@ if __name__ == "__main__":
     )
     # convert i/o to TextIOWrappers
     if args.generate:
+        if not args.constraints_path:
+            args.constraints_path = sys.stdout
         if args.tgt_path is sys.stdout:
             raise argparse.ArgumentError(
                 "Target file cannot be stdout when generating constraints"
