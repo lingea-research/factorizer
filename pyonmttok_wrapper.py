@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
 import argparse
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Iterator
 import pyonmttok
 from collections import defaultdict
-from itertools import takewhile, islice
+from itertools import takewhile, islice, tee
 import re
 from io import TextIOWrapper
 import sys
@@ -13,13 +13,26 @@ import os
 import codecs
 import random
 from multipledispatch import dispatch
-
 from utils.lemmatizer import Lemmatizer
 
 random.seed(1234)
 nl = "\n"
 cr = "\r"
 unk = "{unk,gl,gr}"
+
+
+def count_lines(i: Iterator) -> int:
+    cnt = 0
+    for _ in i:
+        cnt += 1
+    return cnt
+
+
+def wrap_tqdm(to_be_wrapped: Iterable, desc: str, n_lines: int) -> Iterable:
+    if __name__ == "__main__":
+        return tqdm(to_be_wrapped, desc=desc, total=n_lines)
+    else:
+        return to_be_wrapped
 
 
 class PyonmttokWrapper:
@@ -36,15 +49,42 @@ class PyonmttokWrapper:
         self.add_in = add_in
         self.reserved_symbols = reserved_symbols
 
+    # Tokenize overloads:
+    # tokenize(src_path: str, tgt_path: str, constraints_path: str) -> None
+    # tokenize(src: TextIO, tgt: TextIO, constraints: TextIO) -> None
+    # tokenize(src_path: str, tgt_path: str) -> None
+    # tokenize(src: TextIO, tgt: TextIO) -> None
+    # tokenize(src: str) -> str
+    # tokenize(src: str, constraints: dict) -> str
+    # tokenize(src: list) -> list
+    # tokenize(src: list, tgt: list, constraints: list) -> tuple[list, list]
+    # tokenize(src: list constraints: list) -> list
+
+    # Detokenize overloads:
+    # detokenize(src_path: str, tgt_path: str) -> None
+    # detokenize(src: TextIO, tgt: TextIO) -> None
+    # detokenize(src: str) -> str
+    # detokenize(src: list) -> list
+
+    @dispatch(str, str, str)
+    def tokenize(self, src_path: str, tgt_path: str, constraints_path: str) -> None:
+        self.tokenize(
+            open(src_path, "r"), open(tgt_path, "w"), open(constraints_path, "r")
+        )
+
     @dispatch(TextIOWrapper, TextIOWrapper, TextIOWrapper)
     def tokenize(
-        self, src: TextIOWrapper, tgt: TextIOWrapper, constr: TextIOWrapper
+        self, src: TextIOWrapper, tgt: TextIOWrapper, constraints: TextIOWrapper
     ) -> None:
-        for s, c in zip(src, constr):
-            tgt.write(self.tokenize(s, eval(c)))
+        src_iter, src_iter_copy = tee(iter(src))
+        n_lines = count_lines(src_iter_copy)
+        for src_sent, constraint in wrap_tqdm(
+            zip(src_iter, constraints), desc=f"Tokenizing {src.name}", n_lines=n_lines
+        ):
+            tgt.write(self.tokenize(src_sent, eval(constraint)))
         src.close()
         tgt.close()
-        constr.close()
+        constraints.close()
 
     @dispatch(str, str)
     def tokenize(self, src_path: str, tgt_path: str) -> None:
@@ -52,8 +92,12 @@ class PyonmttokWrapper:
 
     @dispatch(TextIOWrapper, TextIOWrapper)
     def tokenize(self, src: TextIOWrapper, tgt: TextIOWrapper) -> None:
-        for s in src:
-            tgt.write(self.tokenize(s))
+        src_iter, src_iter_copy = tee(iter(src))
+        n_lines = count_lines(src_iter_copy)
+        for src_sent in wrap_tqdm(
+            src_iter, desc=f"Tokenizing {src.name}", n_lines=n_lines
+        ):
+            tgt.write(self.tokenize(src_sent))
         src.close()
         tgt.close()
 
@@ -235,7 +279,6 @@ class PyonmttokWrapper:
         tgt: list[str],
         constraints: list[dict[tuple[tuple[int, int], tuple[int, int]], str]],
     ) -> tuple[list[str], list[str]]:
-
         def generate_tuples(
             constraints: list[dict[tuple[tuple[int, int], tuple[int, int]], str]],
             idx: int,
@@ -324,15 +367,6 @@ class PyonmttokWrapper:
                             ],
                         ]
                     )
-                else:
-                    s = " ".join(
-                        [
-                            f"{s_sw}|t0"
-                            if not re.search(byte_seq_pattern, s_sw)
-                            else s_sw
-                            for s_sw in s.split()
-                        ]
-                    )
 
                 first, *others = s.split(" ", 1)
                 if add_space:
@@ -373,8 +407,10 @@ class PyonmttokWrapper:
 
     @dispatch(TextIOWrapper, TextIOWrapper)
     def detokenize(self, src: TextIOWrapper, tgt: TextIOWrapper) -> None:
-        for s in src:
-            tgt.write(self.detokenize(s))
+        src_iter, src_iter_copy = tee(iter(src))
+        n_lines = count_lines(src_iter_copy)
+        for src_sent in wrap_tqdm(src_iter, desc=f"Detokenizing {src.name}", n_lines=n_lines):
+            tgt.write(self.detokenize(src_sent))
         src.close()
         tgt.close()
 
@@ -490,6 +526,7 @@ class PyonmttokWrapper:
         wrand: float = 0.0,
         sskip: float = 0.0,
         use_lemmatization: bool = True,
+        distance_limit: int = 80,
         distance_threshold: float = 0.4,
         src_lang: str = "",
         tgt_lang: str = "",
@@ -507,6 +544,8 @@ class PyonmttokWrapper:
             wrand (float): probability of word substitution randomization
             sskip (float): probability of sentence skip
               (leave it with the empty dict of constraints)
+            distance_limit (int): if length of the target sentence is
+              more than distance_limit, distance threshold test will be applied
             distance_threshold (float): distance threshold
               (1.0 == length of target sentence) between matched words
             use_lemmatization (bool): add lemmatized versions to the dictionary and
@@ -551,7 +590,8 @@ class PyonmttokWrapper:
                     for src_word_lemma in src_lemmatizer.lemmatize(src_word):
                         src_word_lemma = src_word_lemma.decode()
                         vocab[src_word_lemma] = vocab[src_word_lemma].union(
-                            tgt_word_lemma.decode() for tgt_word_lemma in tgt_lemmatizer.lemmatize(tgt_word)
+                            tgt_word_lemma.decode()
+                            for tgt_word_lemma in tgt_lemmatizer.lemmatize(tgt_word)
                         )
 
         retval = []
@@ -578,7 +618,10 @@ class PyonmttokWrapper:
             src_span: tuple[int, int],
             tgt_span: tuple[int, int],
         ) -> Optional[str]:
-            if abs(tgt_span[0] - src_span[0]) / tgt_sent_length > distance_threshold:
+            if (
+                tgt_sent_length > distance_limit
+                and abs(tgt_span[0] - src_span[0]) / tgt_sent_length > distance_threshold
+            ):
                 return None
             if wskip or wrand:
                 # Esentially the same noisification as the one in the MLM
@@ -593,9 +636,6 @@ class PyonmttokWrapper:
                     return random.choice(list(random_values))
             return tgt_word
 
-        # count lines and initialize the tqdm progress bar
-        with open(src_path) as src:
-            pb = tqdm(total=sum(1 for _ in src))
         # generate constraints
         constr_out = (
             open(constraints_path, "w")
@@ -604,9 +644,16 @@ class PyonmttokWrapper:
             if constraints_path
             else None
         )
-        with open(src_path, "r") as src, open(tgt_path, "r") as tgt, pb as progress_bar:
+
+        with open(src_path, "r") as src, open(tgt_path, "r") as tgt:
+            src_iter, src_iter_copy = tee(iter(src))
+            n_lines = count_lines(src_iter_copy)
             tokenizer = pyonmttok.Tokenizer(mode="aggressive")
-            for idx, (src_sent, tgt_sent) in enumerate(zip(src, tgt)):
+            for src_sent, tgt_sent in wrap_tqdm(
+                zip(src_iter, tgt),
+                desc=f"Generating constraints for {src.name}",
+                n_lines=n_lines,
+            ):
                 rv = {}
                 if sskip and random.uniform(0.0, 1.0) < sskip:
                     if return_list:
@@ -655,7 +702,8 @@ class PyonmttokWrapper:
                             lemmatize
                             and any(
                                 tgt_vocab_lemmas.intersection(
-                                    lemma.decode() for lemma in tgt_lemmatizer.lemmatize(tgt_word)
+                                    lemma.decode()
+                                    for lemma in tgt_lemmatizer.lemmatize(tgt_word)
                                 )
                                 for tgt_vocab_lemmas in tgt_vocab_words[1:]
                             )
@@ -664,13 +712,13 @@ class PyonmttokWrapper:
                                 tgt_word, len(tgt_sent), src_span, tgt_span
                             ):
                                 rv[src_span] = constraint
+                # add constraints to the result (either final list or out file)
                 if return_list:
                     retval += (rv,)
                 else:
                     constr_out.write(
                         f"{str(rv)}{nl if nl in src_sent or nl in tgt_sent else ''}"
                     )
-                progress_bar.update(idx + 1 - progress_bar.n)
         if constr_out and constr_out is not sys.stdout:
             constr_out.close()
         if return_list:
@@ -763,10 +811,13 @@ def parse_args():
         help="Path to the constraints vocabulary (bilingual word mappings)",
     )
     parser.add_argument(
-        "--constr_out",
-        default=sys.stdout,
-        type=str,
-        help="Path to the output constraints file",
+        "--distance_threshold", default=0.4, type=float, help="Distance threshold m"
+    )
+    parser.add_argument(
+        "--distance_limit",
+        default=80,
+        type=int,
+        help="Distance limit is used to define the ",
     )
     return parser.parse_args()
 
@@ -793,6 +844,8 @@ if __name__ == "__main__":
             wrand=args.wrand,
             sskip=args.sskip,
             use_lemmatization=True,
+            distance_limit=args.distance_limit,
+            distance_threshold=args.distance_threshold,
             src_lang=args.src_lang,
             tgt_lang=args.tgt_lang,
             liblemm_path="lib",
