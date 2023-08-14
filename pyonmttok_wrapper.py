@@ -8,6 +8,7 @@ from itertools import takewhile, islice, tee
 import re
 from io import TextIOWrapper
 import sys
+import copy
 from tqdm import tqdm
 import os
 import codecs
@@ -174,9 +175,9 @@ class PyonmttokWrapper:
 
         def process_tokens(tokens: list[pyonmttok.Token]) -> Iterable[pyonmttok.Token]:
             tokens = iter(tokens)
+            join_left = False
             for token in tokens:
                 byte = None
-
                 # reserved symbols
                 if token.surface in self.reserved_symbols:
                     byte = token.surface.encode()
@@ -204,7 +205,7 @@ class PyonmttokWrapper:
                     if token.type in [
                         pyonmttok.TokenType.LEADING_SUBWORD,
                         pyonmttok.TokenType.WORD,
-                    ]:
+                    ] and not join_left:
                         token.features += ("|wb",)
                     else:
                         token.features += ("|wbn",)
@@ -246,11 +247,16 @@ class PyonmttokWrapper:
                         "|in" if self.add_in else "",
                     ]
 
+                join_left = False
                 new_surface = (
                     token.surface.upper()
                     if token.surface.upper().lower() == token.surface
                     else token.surface
                 )
+
+                if token.join_right == True:
+                    join_left = True
+
                 token.surface = (
                     f'{new_surface}{"".join(token.features)}'
                     if not byte
@@ -485,15 +491,24 @@ class PyonmttokWrapper:
                     else:
                         new_token.casing = pyonmttok.Casing.NONE
                         new_token.surface = subword
-                    # assign type, join_left and spacer
+                    # word beginning/trailing subword
+                    tokens_copy = copy.copy(tokens)
                     if "wbn" in factors:
                         new_token.type = pyonmttok.TokenType.TRAILING_SUBWORD
                         new_token.join_left = True
                         new_token.spacer = False
                     else:
-                        new_token.type = pyonmttok.TokenType.WORD
                         new_token.join_left = False
                         new_token.spacer = True
+                        try:
+                            next_token = next(tokens_copy)
+                        except StopIteration:
+                            new_token.type = pyonmttok.TokenType.WORD
+                        else:
+                            if "wbn" in extract_subword_n_factors(next_token)[1]:
+                                new_token.type = pyonmttok.TokenType.LEADING_SUBWORD
+                            else:
+                                new_token.type = pyonmttok.TokenType.WORD
 
                 # punctuation, emoji
                 else:
@@ -857,12 +872,12 @@ if __name__ == "__main__":
             args.src_path, "r"
         ) if args.src_path is not sys.stdin else sys.stdin as src, open(
             args.tgt_path, "w"
-        ) if args.tgt_path is not sys.stdout else sys.stdout as tgt, open(
-            args.constraints_path, "r"
-        ) if args.constraints_path is args.constraints_path else sys.stdin as constraints:
+        ) if args.tgt_path is not sys.stdout else sys.stdout as tgt:
             if args.tokenize:
-                tokenizer.tokenize(
-                    src, tgt, constraints
-                ) if args.constraints_path else tokenizer.tokenize(src, tgt)
+                if args.constraints_path:
+                    constarints = open(args.constraints_path, "r")
+                    tokenizer.tokenize(src, tgt, constarints)
+                else:
+                    tokenizer.tokenize(src, tgt)
             else:
                 tokenizer.detokenize(src, tgt)
