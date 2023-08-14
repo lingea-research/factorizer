@@ -80,7 +80,9 @@ class PyonmttokWrapper:
         src_iter, src_iter_copy = tee(iter(src))
         n_lines = count_lines(src_iter_copy)
         for src_sent, constraint in wrap_tqdm(
-            to_be_wrapped=zip(src_iter, constraints), desc=f"Tokenizing {src.name}", n_lines=n_lines
+            to_be_wrapped=zip(src_iter, constraints),
+            desc=f"Tokenizing {src.name}",
+            n_lines=n_lines,
         ):
             tgt.write(self.tokenize(src_sent, eval(constraint)))
         src.close()
@@ -104,23 +106,6 @@ class PyonmttokWrapper:
 
     @dispatch(str)
     def tokenize(self, src: str) -> str:
-        return self.tokenize([src])[0]
-
-    @dispatch(str, dict)
-    def tokenize(self, src: str, constraints: dict[tuple[int, int], str]) -> str:
-        return self.tokenize([src], [constraints])[0]
-
-    @dispatch(list)
-    def tokenize(self, src: list[str]) -> list[str]:
-        """Tokenizes the given sentence(s)
-
-        Args:
-            src (list): list of input sentences
-
-        Returns:
-            output (list): tokenized sentences
-        """
-
         def parse_bits(byte: str) -> int:
             """Parses the first 4 bits from the first byte (utf-8)
 
@@ -202,10 +187,14 @@ class PyonmttokWrapper:
                             else "|scl",
                         )
                     # the beginning of word
-                    if token.type in [
-                        pyonmttok.TokenType.LEADING_SUBWORD,
-                        pyonmttok.TokenType.WORD,
-                    ] and not join_left:
+                    if (
+                        token.type
+                        in [
+                            pyonmttok.TokenType.LEADING_SUBWORD,
+                            pyonmttok.TokenType.WORD,
+                        ]
+                        and not join_left
+                    ):
                         token.features += ("|wb",)
                     else:
                         token.features += ("|wbn",)
@@ -264,94 +253,54 @@ class PyonmttokWrapper:
                 )
                 yield token
 
-        retval = []
-        for sent in src:
-            tokens = self.tokenizer.tokenize(sent, as_token_objects=True)
-            tokens = process_tokens(tokens)
-            tokenized_joined = " ".join(
-                [
-                    token.surface
-                    for token in tokens
-                    if token.surface and not search_byte_pattern(token.surface)
-                ]
-            )
-            retval += (f'{tokenized_joined}{nl if sent.endswith((nl, cr)) else ""}',)
-        return retval
+        tokens = self.tokenizer.tokenize(src, as_token_objects=True)
+        tokens = process_tokens(tokens)
+        tokenized_joined = " ".join(
+            [
+                token.surface
+                for token in tokens
+                if token.surface and not search_byte_pattern(token.surface)
+            ]
+        )
+        return f'{tokenized_joined}{nl if src.endswith((nl, cr)) else ""}'
 
-    @dispatch(list, list, list)
-    def tokenize(
-        self,
-        src: list[str],
-        tgt: list[str],
-        constraints: list[dict[tuple[tuple[int, int], tuple[int, int]], str]],
-    ) -> tuple[list[str], list[str]]:
-        def generate_tuples(
-            constraints: list[dict[tuple[tuple[int, int], tuple[int, int]], str]],
-            idx: int,
-        ) -> Iterable[tuple[tuple[int, int], tuple[int, int]]]:
-            for constraint in constraints:
-                yield tuple({c[0][idx]: c[1]} for c in constraint.items())
-
-        src_constraints = generate_tuples(constraints, 0)
-        # tgt_constraints = generate_tuples(constraints, 1)  # if we should use it in tgt?
-        return self.tokenize(src, src_constraints), self.tokenize(tgt)
-
-    @dispatch(list, list)
-    def tokenize(
-        self, src: list[str], constraints: list[dict[tuple[int, int], str]]
-    ) -> list[str]:
-        """Tokenizes the input with constraints
-
-        Args:
-            src (list): list of raw source sentences
-            constraints (list): list of constraints of shape (range -> constraint)
-
-        Returns:
-            output (list): tokenized sentences
-        """
-
-        def generate_slices() -> Iterable[Iterable[str]]:
-            """Generates slices for sentences.
-            It is assumed that the only delimiter between words is whitespace.
+    @dispatch(str, dict)
+    def tokenize(self, src: str, constraints: dict[tuple[int, int], str]) -> str:
+        def generate_slices(
+            sent: str, constr: dict[tuple[int, int], str]
+        ) -> Iterable[str]:
+            """Generates slices for a single sentence
 
             Returns:
-                slices (Generator): iterable of slices
+                slices (Generator): slices that were constructed based on constraints
             """
 
-            def _generate_slices() -> Iterable[str]:
-                """Generates slices for a single sentence
-
-                Returns:
-                    slices (Generator): slices that were constructed based on constraints
-                """
-
-                prev_start_idx = 0
-                for key, val in sorted(constr.items()):
-                    # yield everything between constraint ranges
-                    between = sent[prev_start_idx : key[0]]
-                    if between.startswith(" "):
-                        yield ["", ""]
-                    if between.strip():
-                        yield [between.strip(), ""]
-                    if between.endswith(" ") and len(between) > 1:
-                        yield ["", ""]
-                    # yield constraint range
-                    yield [sent[key[0] : key[1]], val]
-                    prev_start_idx = key[1]
-
-                # add last slice, even if its empty
-                if sent[prev_start_idx:].startswith(" "):
-                    prev_start_idx += 1
+            prev_start_idx = 0
+            for key, val in sorted(constr.items()):
+                # yield everything between constraint ranges
+                between = sent[prev_start_idx : key[0]]
+                if between.startswith(" "):
                     yield ["", ""]
-                yield [sent[prev_start_idx:].strip(), ""]
+                if between.strip():
+                    yield [between.strip(), ""]
+                if between.endswith(" ") and len(between) > 1:
+                    yield ["", ""]
+                # yield constraint range
+                yield [sent[key[0] : key[1]], val]
+                prev_start_idx = key[1]
 
-            for sent, constr in zip(src, constraints):
-                yield list(_generate_slices())
+            # add last slice, even if its empty
+            if sent[prev_start_idx:].startswith(" "):
+                prev_start_idx += 1
+                yield ["", ""]
+            yield [sent[prev_start_idx:].strip(), ""]
 
-        def generate_tokenized() -> Iterable[str]:
+        def generate_tokenized(
+            src_slice_tokenized: list, constr_slice_tokenized: list
+        ) -> Iterable[str]:
             add_space = True
             byte_seq_pattern = r"^<[\d\#]>$"
-            for s, c in zip(slice_tokenized, constr_tokenized):
+            for s, c in zip(src_slice_tokenized, constr_slice_tokenized):
                 if not s:
                     add_space = True
                     continue
@@ -384,6 +333,53 @@ class PyonmttokWrapper:
                     first = first.replace("|wb", "|wbn")
                 yield " ".join([first, *others])
 
+        slices = generate_slices(src, constraints)
+        src_slice, constr_slice = (list(s) for s in list(zip(*slices)))
+        src_slice_tokenized = self.tokenize(src_slice)
+        constr_sliced_tokenized = self.tokenize(constr_slice)
+        tokenized_joined = " ".join(
+            generate_tokenized(src_slice_tokenized, constr_sliced_tokenized)
+        )
+        return f'{tokenized_joined}{nl if src[0].endswith((nl, cr)) else ""}'
+
+    @dispatch(list)
+    def tokenize(self, src: list[str]) -> list[str]:
+        retval = []
+        for sent in src:
+            retval += (self.tokenize(sent),)
+        return retval
+
+    # @dispatch(list, list, list)
+    # def tokenize(
+    #     self,
+    #     src: list[str],
+    #     tgt: list[str],
+    #     constraints: list[dict[tuple[tuple[int, int], tuple[int, int]], str]],
+    # ) -> tuple[list[str], list[str]]:
+    #     def generate_tuples(
+    #         constraints: list[dict[tuple[tuple[int, int], tuple[int, int]], str]],
+    #         idx: int,
+    #     ) -> Iterable[tuple[tuple[int, int], tuple[int, int]]]:
+    #         for constraint in constraints:
+    #             yield tuple({c[0][idx]: c[1]} for c in constraint.items())
+
+    #     src_constraints = generate_tuples(constraints, 0)
+    #     # tgt_constraints = generate_tuples(constraints, 1)  # if we should use it in tgt?
+    #     return self.tokenize(src, src_constraints), self.tokenize(tgt)
+
+    @dispatch(list, list)
+    def tokenize(
+        self, src: list[str], constraints: list[dict[tuple[int, int], str]]
+    ) -> list[str]:
+        """Tokenizes the input with constraints
+
+        Args:
+            src (list): list of raw source sentences
+            constraints (list): list of constraints of shape (range -> constraint)
+
+        Returns:
+            output (list): tokenized sentences
+        """
         if len(src) != len(constraints):
             # since we are iterating over constarints, we need to add empty constraints,
             # so their count will correspond to that of input sentences
@@ -391,14 +387,8 @@ class PyonmttokWrapper:
                 constraints += ({},)
 
         retval = []
-        src_slices = generate_slices()
-        for slice in src_slices:
-            # transpose
-            sliced_src, sliced_constr = (list(s) for s in list(zip(*slice)))
-            slice_tokenized = self.tokenize(sliced_src)
-            constr_tokenized = self.tokenize(sliced_constr)
-            tokenized_joined = " ".join(generate_tokenized())
-            retval += (f'{tokenized_joined}{nl if src[0].endswith((nl, cr)) else ""}',)
+        for sent, constr in zip(src, constraints):
+            retval += (self.tokenize(sent, constr),)
         return retval
 
     @dispatch(str, str)
@@ -415,26 +405,15 @@ class PyonmttokWrapper:
     def detokenize(self, src: TextIOWrapper, tgt: TextIOWrapper) -> None:
         src_iter, src_iter_copy = tee(iter(src))
         n_lines = count_lines(src_iter_copy)
-        for src_sent in wrap_tqdm(to_be_wrapped=src_iter, desc=f"Detokenizing {src.name}", n_lines=n_lines):
+        for src_sent in wrap_tqdm(
+            to_be_wrapped=src_iter, desc=f"Detokenizing {src.name}", n_lines=n_lines
+        ):
             tgt.write(self.detokenize(src_sent))
         src.close()
         tgt.close()
 
     @dispatch(str)
     def detokenize(self, src: str) -> str:
-        return self.detokenize([src])[0]
-
-    @dispatch(list)
-    def detokenize(self, src: list[str]) -> list[str]:
-        """Detokenizes sentence(s)
-
-        Args:
-            src (list): list of input sentences
-
-        Returns:
-            output (list): detokenized sentences
-        """
-
         def extract_subword_n_factors(token: str) -> tuple[str, list[str]]:
             try:
                 subword, factors = token.split("|", 1)
@@ -520,14 +499,16 @@ class PyonmttokWrapper:
 
                 yield new_token
 
+        tokens = src.split()
+        tokens = list(process_tokens(tokens))
+        detokenized_joined = "".join(self.tokenizer.detokenize(tokens))
+        return f'{detokenized_joined}{nl if src.endswith((nl, cr)) else ""}'
+
+    @dispatch(list)
+    def detokenize(self, src: list[str]) -> list[str]:
         retval = []
         for sent in src:
-            tokens = sent.split()
-            tokens = list(process_tokens(tokens))
-            detokenized_joined = self.tokenizer.detokenize(tokens)
-            # add newline if there is one in the source sentence
-            retval += (f'{detokenized_joined}{nl if sent.endswith((nl, cr)) else ""}',)
-
+            retval += (self.detokenize(sent),)
         return retval
 
     def generate_constraints(
@@ -667,7 +648,7 @@ class PyonmttokWrapper:
             for src_sent, tgt_sent in wrap_tqdm(
                 to_be_wrapped=zip(src_iter, tgt),
                 desc=f"Generating constraints for {src.name}",
-                n_lines=n_lines
+                n_lines=n_lines,
             ):
                 rv = {}
                 if sskip and random.uniform(0.0, 1.0) < sskip:
@@ -772,7 +753,7 @@ def parse_args():
         "-c",
         "--constr",
         dest="constraints_path",
-        default='',
+        default="",
         type=str,
         help="Path to the constraints file",
     )
