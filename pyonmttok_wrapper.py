@@ -346,7 +346,7 @@ class PyonmttokWrapper:
         tokenized_joined = " ".join(
             generate_tokenized(src_slice_tokenized, constr_sliced_tokenized)
         )
-        return f'{tokenized_joined}{nl if src[0].endswith((nl, cr)) else ""}'
+        return f'{tokenized_joined}{nl if src.endswith((nl, cr)) else ""}'
 
     @dispatch(list)
     def tokenize(self, src: list[str]) -> list[str]:
