@@ -45,9 +45,14 @@ class PyonmttokWrapper:
         reserved_symbols: list = ["#", ":", "_", "\\", "|", "▁"],
     ):
         self.model_path = model_path
-        self.tokenizer = pyonmttok.Tokenizer(
-            mode="aggressive", sp_model_path=model_path, case_feature=case_feature
-        )
+        self.add_in = add_in
+        self.case_feature = case_feature
+        try:
+            self.tokenizer = pyonmttok.Tokenizer(
+                mode="aggressive", sp_model_path=model_path, case_feature=case_feature
+            )
+        except ValueError:  # path does not exist (spm_train is used)
+            self.tokenizer = None
         self.add_in = add_in
         self.reserved_symbols = reserved_symbols
 
@@ -747,6 +752,12 @@ class PyonmttokWrapper:
             print(f"Ingesting file {file} ...")
             learner.ingest_file(file)
         learner.learn(self.model_path)
+        # initialize the tokenizer from trained model
+        self.tokenizer = pyonmttok.Tokenizer(
+            mode="aggressive",
+            sp_model_path=self.model_path,
+            case_feature=self.case_feature,
+        )
 
 
 def parse_args():
@@ -853,7 +864,6 @@ def parse_args():
         "--train_extremely_large_corpus",
         action="store_true",
         default=False,
-        type=bool,
         help="Increase bit depth for unigram tokenization",
     )
     parser.add_argument("--train_sets", nargs="*", help="Files to be ingested")
@@ -895,7 +905,7 @@ if __name__ == "__main__":
             files=args.train_sets,
             vocab_size=args.vocab_size,
             character_coverage=args.character_coverage,
-            train_extremely_large_corpus=args.train_extremely_large_corpus
+            train_extremely_large_corpus=args.train_extremely_large_corpus,
         )
     else:
         with open(
