@@ -41,11 +41,13 @@ class PyonmttokWrapper:
         self,
         model_path: str = None,
         add_in: bool = False,
+        add_constr: bool = False,
         case_feature: bool = True,
         reserved_symbols: list = ["#", ":", "_", "\\", "|", "▁"],
     ):
         self.model_path = model_path
         self.add_in = add_in
+        self.add_constr = add_constr
         self.case_feature = case_feature
         try:
             self.tokenizer = pyonmttok.Tokenizer(
@@ -207,6 +209,8 @@ class PyonmttokWrapper:
                     # |in factor
                     if self.add_in:
                         token.features += ("|in",)
+                    if self.add_constr:
+                        token.features += ("|t0",)
 
                 # numeric
                 elif token.surface.isnumeric():
@@ -219,13 +223,19 @@ class PyonmttokWrapper:
                         token.features += ("|wbn",)
                     if self.add_in:
                         token.features += ("|in",)
+                    if self.add_constr:
+                        token.features += ("|t0",)
 
                 # unicode (find first byte in byte sequence)
                 elif byte := search_byte_pattern(token.surface):
                     token_sequence_length = parse_bits(
                         byte.group()
                     )  # number of tokens to be skipped
-                    token.features = [unk, get_join_factors(token)]
+                    token.features = [
+                        unk,
+                        get_join_factors(token),
+                        "t0" if self.add_constr else "",
+                    ]
                     token_sequence = [
                         token,
                         *islice(tokens, 0, token_sequence_length - 1),
@@ -240,15 +250,16 @@ class PyonmttokWrapper:
                     token.features = [
                         get_join_factors(token),
                         "|in" if self.add_in else "",
+                        "|t0" if self.add_constr else "",
                     ]
 
-                join_left = False
                 new_surface = (
                     token.surface.upper()
                     if token.surface.upper().lower() == token.surface
                     else token.surface
                 )
 
+                join_left = False
                 if token.join_right == True:
                     join_left = True
 
@@ -841,6 +852,7 @@ def parse_args():
         help="Path to the SP model",
     )
     parser.add_argument("--add_in", action="store_true", default=False)
+    parser.add_argument("--add_constr", action="store_true", default=False)
     parser.add_argument(
         "--no_case_feature", action="store_false", dest="case_feature", default=True
     )
@@ -882,7 +894,10 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     tokenizer = PyonmttokWrapper(
-        model_path=args.model_path, add_in=args.add_in, case_feature=args.case_feature
+        model_path=args.model_path,
+        add_in=args.add_in,
+        add_constr=args.add_constr,
+        case_feature=args.case_feature,
     )
     # convert i/o to TextIOWrappers
     if args.generate:
