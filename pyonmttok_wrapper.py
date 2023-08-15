@@ -234,7 +234,7 @@ class PyonmttokWrapper:
                     token.features = [
                         unk,
                         get_join_factors(token),
-                        "t0" if self.add_constr else "",
+                        "|t0" if self.add_constr else "",
                     ]
                     token_sequence = [
                         token,
