@@ -39,13 +39,14 @@ def wrap_tqdm(to_be_wrapped: Iterable, desc: str, n_lines: int) -> Iterable:
 class PyonmttokWrapper:
     def __init__(
         self,
-        model: str = None,
+        model_path: str = None,
         add_in: bool = False,
         case_feature: bool = True,
         reserved_symbols: list = ["#", ":", "_", "\\", "|", "▁"],
     ):
+        self.model_path = model_path
         self.tokenizer = pyonmttok.Tokenizer(
-            mode="aggressive", sp_model_path=model, case_feature=case_feature
+            mode="aggressive", sp_model_path=model_path, case_feature=case_feature
         )
         self.add_in = add_in
         self.reserved_symbols = reserved_symbols
@@ -720,19 +721,43 @@ class PyonmttokWrapper:
         if return_list:
             return retval
 
+    def spm_train(
+        self,
+        files: list[str],
+        vocab_size: int,
+        character_coverage: float,
+        train_extremely_large_corpus: bool,
+    ):
+        """Trains an SP model
+
+        Args:
+            files (list): list of files to use for the training
+            vocab_size (int): size of the resulting vocabulary
+            character_coverage (float): coverage of words
+        """
+        learner = pyonmttok.SentencePieceLearner(
+            vocab_size=vocab_size,
+            character_coverage=character_coverage,
+            train_extremely_large_corpus=train_extremely_large_corpus,
+            byte_fallback=True,
+        )
+        for file in files:
+            if not os.path.exists(file):
+                continue
+            print(f"Ingesting file {file} ...")
+            learner.ingest_file(file)
+        learner.learn(self.model_path)
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
     action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument("--tokenize", action="store_true", help="Tokenize a file")
+    action.add_argument("--detokenize", action="store_true", help="Detokenize a file")
     action.add_argument(
-        "--tokenize", action="store_true", help="Use this flag to tokenize a file"
+        "--generate", action="store_true", help="Generate a constraints file"
     )
-    action.add_argument(
-        "--detokenize", action="store_true", help="Use this flag to detokenize a file"
-    )
-    action.add_argument(
-        "--generate", action="store_true", help="Use this flag to generate constraints"
-    )
+    action.add_argument("--spm_train", action="store_true", help="Train an SP model")
     parser.add_argument(
         "-s",
         "--src",
@@ -749,6 +774,7 @@ def parse_args():
         type=str,
         help="Path to target file",
     )
+
     parser.add_argument(
         "-c",
         "--constr",
@@ -793,7 +819,7 @@ def parse_args():
         dest="model_path",
         default=None,
         type=str,
-        help="Path to SP model",
+        help="Path to the SP model",
     )
     parser.add_argument("--add_in", action="store_true", default=False)
     parser.add_argument(
@@ -815,6 +841,22 @@ def parse_args():
         type=int,
         help="Distance limit is used to define the ",
     )
+
+    parser.add_argument("--vocab_size", default=32000, type=int, help="Vocabulary size")
+    parser.add_argument(
+        "--character_coverage",
+        default=0.98,
+        type=float,
+        help="Character coverage to determine the minimum symbols",
+    )
+    parser.add_argument(
+        "--train_extremely_large_corpus",
+        action="store_true",
+        default=False,
+        type=bool,
+        help="Increase bit depth for unigram tokenization",
+    )
+    parser.add_argument("--train_sets", nargs="*", help="Files to be ingested")
     return parser.parse_args()
 
 
@@ -822,7 +864,7 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     tokenizer = PyonmttokWrapper(
-        model=args.model_path, add_in=args.add_in, case_feature=args.case_feature
+        model_path=args.model_path, add_in=args.add_in, case_feature=args.case_feature
     )
     # convert i/o to TextIOWrappers
     if args.generate:
@@ -847,6 +889,13 @@ if __name__ == "__main__":
             src_lang=args.src_lang,
             tgt_lang=args.tgt_lang,
             liblemm_path="lib",
+        )
+    elif args.spm_train:
+        tokenizer.spm_train(
+            files=args.train_sets,
+            vocab_size=args.vocab_size,
+            character_coverage=args.character_coverage,
+            train_extremely_large_corpus=args.train_extremely_large_corpus
         )
     else:
         with open(
