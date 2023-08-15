@@ -328,7 +328,15 @@ class PyonmttokWrapper:
                             ],
                         ]
                     )
-
+                else:
+                    s = " ".join(
+                        [
+                            f"{s_sw}|t0"
+                            if not re.search(byte_seq_pattern, s_sw)
+                            else s_sw
+                            for s_sw in s.split()
+                        ]
+                    )
                 first, *others = s.split(" ", 1)
                 if add_space:
                     first = first.replace("|gl+", "|gl-")
