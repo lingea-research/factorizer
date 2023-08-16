@@ -469,7 +469,7 @@ class PyonmttokWrapper:
                     try:
                         new_token.surface = chr(int(byte_sequence))
                     # invalid byte sequence
-                    except OverflowError:
+                    except (OverflowError, ValueError):
                         new_token.surface = ""
                     else:
                         new_token.type = pyonmttok.TokenType.WORD
