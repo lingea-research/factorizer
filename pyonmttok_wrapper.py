@@ -2,7 +2,7 @@
 
 import argparse
 from typing import Iterable, Optional, Iterator
-import pyonmttok
+from pyonmttok import Token, Tokenizer, TokenType, Casing, SentencePieceLearner
 from collections import defaultdict
 from itertools import takewhile, islice, tee
 import re
@@ -50,7 +50,7 @@ class PyonmttokWrapper:
         self.add_constr = add_constr
         self.case_feature = case_feature
         try:
-            self.tokenizer = pyonmttok.Tokenizer(
+            self.tokenizer = Tokenizer(
                 mode="aggressive", sp_model_path=model_path, case_feature=case_feature
             )
         except ValueError:  # path does not exist (spm_train is used)
@@ -152,7 +152,7 @@ class PyonmttokWrapper:
 
             return re.search(r"(?<=\<0[x])[\da-f]{2}(?=\>)", txt, flags=re.IGNORECASE)
 
-        def get_join_factors(token: pyonmttok.Token) -> str:
+        def get_join_factors(token: Token) -> str:
             """Gets string representation of join factors
 
             Args:
@@ -166,7 +166,7 @@ class PyonmttokWrapper:
             join_factors += "|gr+" if token.join_right else "|gr-"  # if join right
             return join_factors
 
-        def process_tokens(tokens: list[pyonmttok.Token]) -> Iterable[pyonmttok.Token]:
+        def process_tokens(tokens: list[Token]) -> Iterable[Token]:
             tokens = iter(tokens)
             join_left = False
             for token in tokens:
@@ -182,24 +182,24 @@ class PyonmttokWrapper:
                     if len(token.surface) > 1:  # word/subword
                         token.features += (
                             "|ca"
-                            if token.casing == pyonmttok.Casing.UPPERCASE
+                            if token.casing == Casing.UPPERCASE
                             else "|ci"
-                            if token.casing == pyonmttok.Casing.CAPITALIZED
+                            if token.casing == Casing.CAPITALIZED
                             else "|cn",
                         )
                     else:  # single character
                         token.features += (
                             "|scu"
                             if token.casing
-                            in [pyonmttok.Casing.CAPITALIZED, pyonmttok.Casing.UPPERCASE,]
+                            in [Casing.CAPITALIZED, Casing.UPPERCASE,]
                             else "|scl",
                         )
                     # the beginning of word
                     if (
                         token.type
                         in [
-                            pyonmttok.TokenType.LEADING_SUBWORD,
-                            pyonmttok.TokenType.WORD,
+                            TokenType.LEADING_SUBWORD,
+                            TokenType.WORD,
                         ]
                         and not join_left
                     ):
@@ -215,8 +215,8 @@ class PyonmttokWrapper:
                 # numeric
                 elif token.surface.isnumeric():
                     if token.type in [
-                        pyonmttok.TokenType.LEADING_SUBWORD,
-                        pyonmttok.TokenType.WORD,
+                        TokenType.LEADING_SUBWORD,
+                        TokenType.WORD,
                     ]:
                         token.features += ("|wb",)
                     else:
@@ -316,7 +316,7 @@ class PyonmttokWrapper:
             src_slice_tokenized: list, constr_slice_tokenized: list
         ) -> Iterable[str]:
             add_space = True
-            byte_seq_pattern = r"^<[\d\#]>$"
+            byteseq_byte_pattern = r"^<[\d\#]>$"
             for s, c in zip(src_slice_tokenized, constr_slice_tokenized):
                 if not s:
                     add_space = True
@@ -327,13 +327,13 @@ class PyonmttokWrapper:
                         [
                             *[
                                 f"{s_sw}|t1"
-                                if not re.search(byte_seq_pattern, s_sw)
+                                if not re.search(byteseq_byte_pattern, s_sw)
                                 else s_sw
                                 for s_sw in s.split()
                             ],
                             *[
                                 f"{c_sw}|t2"
-                                if not re.search(byte_seq_pattern, c_sw)
+                                if not re.search(byteseq_byte_pattern, c_sw)
                                 else c_sw
                                 for c_sw in c.split()
                             ],
@@ -343,7 +343,7 @@ class PyonmttokWrapper:
                     s = " ".join(
                         [
                             f"{s_sw}|t0"
-                            if not re.search(byte_seq_pattern, s_sw)
+                            if not re.search(byteseq_byte_pattern, s_sw)
                             else s_sw
                             for s_sw in s.split()
                         ]
@@ -449,15 +449,15 @@ class PyonmttokWrapper:
         def find_any(factors: list, *factors2find: list[str]) -> bool:
             return any(factor in factors2find for factor in factors)
 
-        def assign_join(token: pyonmttok.Token, factors: list[str]) -> None:
+        def assign_join(token: Token, factors: list[str]) -> None:
             token.join_left = True if "gl+" in factors else False
             token.join_right = True if "gr+" in factors else False
 
-        def process_tokens(tokens: list[str]) -> list[pyonmttok.Token]:
+        def process_tokens(tokens: list[str]) -> list[Token]:
             tokens = iter(tokens)
             for token in tokens:
                 subword, factors = extract_subword_n_factors(token)
-                new_token = pyonmttok.Token()
+                new_token = Token()
 
                 # byte sequence
                 if re.search(unk, token):
@@ -468,13 +468,13 @@ class PyonmttokWrapper:
                     )
                     try:
                         new_token.surface = chr(int(byte_sequence))
-                    # invalid byte sequence
+                    # invalid byte sequence (crucial for neural generated translations)
                     except (OverflowError, ValueError):
                         new_token.surface = ""
                     else:
-                        new_token.type = pyonmttok.TokenType.WORD
+                        new_token.type = TokenType.WORD
                         new_token.spacer = True
-                        new_token.casing = pyonmttok.Casing.NONE
+                        new_token.casing = Casing.NONE
                         # make it empty space if byte sequence is newline/carriage return
                         new_token.surface = (
                             " " if new_token.surface in [nl, cr] else new_token.surface
@@ -484,21 +484,21 @@ class PyonmttokWrapper:
                 elif find_any(factors, "wbn", "wb"):
                     # assign casing and surface
                     if find_any(factors, "scu", "ca"):
-                        new_token.casing = pyonmttok.Casing.UPPERCASE
+                        new_token.casing = Casing.UPPERCASE
                         new_token.surface = subword
                     elif "ci" in factors:
-                        new_token.casing = pyonmttok.Casing.CAPITALIZED
+                        new_token.casing = Casing.CAPITALIZED
                         new_token.surface = subword.lower().capitalize()
                     elif find_any(factors, "scl", "cn"):
-                        new_token.casing = pyonmttok.Casing.LOWERCASE
+                        new_token.casing = Casing.LOWERCASE
                         new_token.surface = subword.lower()
                     else:
-                        new_token.casing = pyonmttok.Casing.NONE
+                        new_token.casing = Casing.NONE
                         new_token.surface = subword
                     # word beginning/trailing subword
                     tokens_copy = copy.copy(tokens)
                     if "wbn" in factors:
-                        new_token.type = pyonmttok.TokenType.TRAILING_SUBWORD
+                        new_token.type = TokenType.TRAILING_SUBWORD
                         new_token.join_left = True
                         new_token.spacer = False
                     else:
@@ -507,19 +507,19 @@ class PyonmttokWrapper:
                         try:
                             next_token = next(tokens_copy)
                         except StopIteration:
-                            new_token.type = pyonmttok.TokenType.WORD
+                            new_token.type = TokenType.WORD
                         else:
                             if "wbn" in extract_subword_n_factors(next_token)[1]:
-                                new_token.type = pyonmttok.TokenType.LEADING_SUBWORD
+                                new_token.type = TokenType.LEADING_SUBWORD
                             else:
-                                new_token.type = pyonmttok.TokenType.WORD
+                                new_token.type = TokenType.WORD
 
                 # punctuation, emoji
                 else:
                     new_token.surface = subword
-                    new_token.type = pyonmttok.TokenType.WORD
+                    new_token.type = TokenType.WORD
                     new_token.spacer = True
-                    new_token.casing = pyonmttok.Casing.NONE
+                    new_token.casing = Casing.NONE
                     assign_join(new_token, factors)
 
                 yield new_token
@@ -669,7 +669,7 @@ class PyonmttokWrapper:
         with open(src_path, "r") as src, open(tgt_path, "r") as tgt:
             src_iter, src_iter_copy = tee(iter(src))
             n_lines = count_lines(src_iter_copy)
-            tokenizer = pyonmttok.Tokenizer(mode="aggressive")
+            tokenizer = Tokenizer(mode="aggressive")
             for src_sent, tgt_sent in wrap_tqdm(
                 to_be_wrapped=zip(src_iter, tgt),
                 desc=f"Generating constraints for {src.name}",
@@ -759,7 +759,7 @@ class PyonmttokWrapper:
             vocab_size (int): size of the resulting vocabulary
             character_coverage (float): coverage of words
         """
-        learner = pyonmttok.SentencePieceLearner(
+        learner = SentencePieceLearner(
             vocab_size=vocab_size,
             character_coverage=character_coverage,
             train_extremely_large_corpus=train_extremely_large_corpus,
@@ -772,7 +772,7 @@ class PyonmttokWrapper:
             learner.ingest_file(file)
         learner.learn(self.model_path)
         # initialize the tokenizer from trained model
-        self.tokenizer = pyonmttok.Tokenizer(
+        self.tokenizer = Tokenizer(
             mode="aggressive",
             sp_model_path=self.model_path,
             case_feature=self.case_feature,
