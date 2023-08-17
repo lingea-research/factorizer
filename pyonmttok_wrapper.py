@@ -20,6 +20,7 @@ random.seed(1234)
 nl = "\n"
 cr = "\r"
 unk = "{unk,gl,gr}"
+silent = False
 
 
 def count_lines(i: Iterator) -> int:
@@ -30,7 +31,7 @@ def count_lines(i: Iterator) -> int:
 
 
 def wrap_tqdm(to_be_wrapped: Iterable, desc: str, n_lines: int) -> Iterable:
-    if __name__ == "__main__":
+    if __name__ == "__main__" and not silent:
         return tqdm(to_be_wrapped, desc=desc, total=n_lines)
     else:
         return to_be_wrapped
@@ -77,9 +78,12 @@ class PyonmttokWrapper:
 
     @dispatch(str, str, str)
     def tokenize(self, src_path: str, tgt_path: str, constraints_path: str) -> None:
-        self.tokenize(
-            open(src_path, "r"), open(tgt_path, "w"), open(constraints_path, "r")
-        )
+        with (
+            open(src_path, "r") as src,
+            open(tgt_path, "w") as tgt,
+            open(constraints_path, "r") as constraints
+        ):
+            self.tokenize(src, tgt, constraints)
 
     @dispatch(TextIOWrapper, TextIOWrapper, TextIOWrapper)
     def tokenize(
@@ -93,13 +97,14 @@ class PyonmttokWrapper:
             n_lines=n_lines,
         ):
             tgt.write(self.tokenize(src_sent, eval(constraint)))
-        src.close()
-        tgt.close()
-        constraints.close()
 
     @dispatch(str, str)
     def tokenize(self, src_path: str, tgt_path: str) -> None:
-        self.tokenize(open(src_path, "r"), open(tgt_path, "w"))
+        with (
+            open(src_path, "r") as src,
+            open(tgt_path, "w") as tgt
+        ):
+            self.tokenize(src, tgt)
 
     @dispatch(TextIOWrapper, TextIOWrapper)
     def tokenize(self, src: TextIOWrapper, tgt: TextIOWrapper) -> None:
@@ -109,8 +114,6 @@ class PyonmttokWrapper:
             to_be_wrapped=src_iter, desc=f"Tokenizing {src.name}", n_lines=n_lines
         ):
             tgt.write(self.tokenize(src_sent))
-        src.close()
-        tgt.close()
 
     @dispatch(str)
     def tokenize(self, src: str) -> str:
@@ -191,7 +194,10 @@ class PyonmttokWrapper:
                         token.features += (
                             "|scu"
                             if token.casing
-                            in [Casing.CAPITALIZED, Casing.UPPERCASE,]
+                            in [
+                                Casing.CAPITALIZED,
+                                Casing.UPPERCASE,
+                            ]
                             else "|scl",
                         )
                     # the beginning of word
@@ -424,7 +430,11 @@ class PyonmttokWrapper:
             src_path (str): path to source file
             tgt_path (str): path to target file
         """
-        self.detokenize(open(src_path, "r"), open(tgt_path, "w"))
+        with (
+            open(src_path, "r") as src,
+            open(tgt_path, "r") as tgt
+        ):
+            self.detokenize(src, tgt)
 
     @dispatch(TextIOWrapper, TextIOWrapper)
     def detokenize(self, src: TextIOWrapper, tgt: TextIOWrapper) -> None:
@@ -434,8 +444,6 @@ class PyonmttokWrapper:
             to_be_wrapped=src_iter, desc=f"Detokenizing {src.name}", n_lines=n_lines
         ):
             tgt.write(self.detokenize(src_sent))
-        src.close()
-        tgt.close()
 
     @dispatch(str)
     def detokenize(self, src: str) -> str:
@@ -469,7 +477,7 @@ class PyonmttokWrapper:
                     try:
                         new_token.surface = chr(int(byte_sequence))
                     # invalid byte sequence (crucial for neural generated translations)
-                    except (OverflowError, ValueError):
+                    except (OverflowError, ValueError, TypeError):
                         new_token.surface = ""
                     else:
                         new_token.type = TokenType.WORD
@@ -666,7 +674,10 @@ class PyonmttokWrapper:
             else None
         )
 
-        with open(src_path, "r") as src, open(tgt_path, "r") as tgt:
+        with (
+            open(src_path, "r") as src,
+            open(tgt_path, "r") as tgt
+        ):
             src_iter, src_iter_copy = tee(iter(src))
             n_lines = count_lines(src_iter_copy)
             tokenizer = Tokenizer(mode="aggressive")
@@ -887,6 +898,13 @@ def parse_args():
         help="Increase bit depth for unigram tokenization",
     )
     parser.add_argument("--train_sets", nargs="*", help="Files to be ingested")
+
+    parser.add_argument(
+        "--silent",
+        action="store_true",
+        default=False,
+        help="Turn off the tqdm progress bar",
+    )
     return parser.parse_args()
 
 
@@ -899,6 +917,10 @@ if __name__ == "__main__":
         add_constr=args.add_constr,
         case_feature=args.case_feature,
     )
+
+    if args.silent:
+        silent = True
+
     # convert i/o to TextIOWrappers
     if args.generate:
         if not args.constraints_path:
@@ -931,15 +953,18 @@ if __name__ == "__main__":
             train_extremely_large_corpus=args.train_extremely_large_corpus,
         )
     else:
-        with open(
-            args.src_path, "r"
-        ) if args.src_path is not sys.stdin else sys.stdin as src, open(
-            args.tgt_path, "w"
-        ) if args.tgt_path is not sys.stdout else sys.stdout as tgt:
+        with (
+            open(args.src_path, "r")
+            if args.src_path is not sys.stdin
+            else sys.stdin as src,
+            open(args.tgt_path, "w")
+            if args.tgt_path is not sys.stdout
+            else sys.stdout as tgt,
+        ):
             if args.tokenize:
                 if args.constraints_path:
-                    constarints = open(args.constraints_path, "r")
-                    tokenizer.tokenize(src, tgt, constarints)
+                    with open(args.constraints_path, "r") as constraints:
+                        tokenizer.tokenize(src, tgt, constraints)
                 else:
                     tokenizer.tokenize(src, tgt)
             else:
