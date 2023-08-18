@@ -59,51 +59,43 @@ class PyonmttokWrapper:
         self.add_in = add_in
         self.reserved_symbols = reserved_symbols
 
-    # Tokenize overloads:
-    # tokenize(src_path: str, tgt_path: str, constraints_path: str) -> None
-    # tokenize(src: TextIO, tgt: TextIO, constraints: TextIO) -> None
-    # tokenize(src_path: str, tgt_path: str) -> None
-    # tokenize(src: TextIO, tgt: TextIO) -> None
-    # tokenize(src: str) -> str
-    # tokenize(src: str, constraints: dict) -> str
-    # tokenize(src: list) -> list
-    # tokenize(src: list, tgt: list, constraints: list) -> tuple[list, list]
-    # tokenize(src: list constraints: list) -> list
-
-    # Detokenize overloads:
-    # detokenize(src_path: str, tgt_path: str) -> None
-    # detokenize(src: TextIO, tgt: TextIO) -> None
-    # detokenize(src: str) -> str
-    # detokenize(src: list) -> list
-
     @dispatch(str, str, str)
     def tokenize(self, src_path: str, tgt_path: str, constraints_path: str) -> None:
         with (
             open(src_path, "r") as src,
             open(tgt_path, "w") as tgt,
-            open(constraints_path, "r") as constraints
+            open(constraints_path, "r") as constraints,
         ):
             self.tokenize(src, tgt, constraints)
 
-    @dispatch(TextIOWrapper, TextIOWrapper, TextIOWrapper)
+    @dispatch(TextIOWrapper, TextIOWrapper, TextIOWrapper, int)
+    def tokenize(
+        self, src: TextIOWrapper, tgt: TextIOWrapper, constraints: TextIOWrapper, multispan_index = -1
+    ) -> None:
+        if multispan_index > -1:
+            constraints = list(self.generate_tuples(constraints, multispan_index))
+        self.tokenize(src, tgt, constraints)
+
+
+    @dispatch(TextIOWrapper, TextIOWrapper, (list, TextIOWrapper))
     def tokenize(
         self, src: TextIOWrapper, tgt: TextIOWrapper, constraints: TextIOWrapper
     ) -> None:
         src_iter, src_iter_copy = tee(iter(src))
         n_lines = count_lines(src_iter_copy)
+
         for src_sent, constraint in wrap_tqdm(
             to_be_wrapped=zip(src_iter, constraints),
             desc=f"Tokenizing {src.name}",
             n_lines=n_lines,
         ):
-            tgt.write(self.tokenize(src_sent, eval(constraint)))
+            if type(constraint) != dict:
+                constraint = eval(constraint)
+            tgt.write(self.tokenize(src_sent, constraint))
 
     @dispatch(str, str)
     def tokenize(self, src_path: str, tgt_path: str) -> None:
-        with (
-            open(src_path, "r") as src,
-            open(tgt_path, "w") as tgt
-        ):
+        with open(src_path, "r") as src, open(tgt_path, "w") as tgt:
             self.tokenize(src, tgt)
 
     @dispatch(TextIOWrapper, TextIOWrapper)
@@ -265,6 +257,8 @@ class PyonmttokWrapper:
                     else token.surface
                 )
 
+                # current token has join_right == True,
+                # so the next token will have join_left = True
                 join_left = False
                 if token.join_right == True:
                     join_left = True
@@ -291,7 +285,7 @@ class PyonmttokWrapper:
     def tokenize(self, src: str, constraints: dict[tuple[int, int], str]) -> str:
         def generate_slices(
             sent: str, constr: dict[tuple[int, int], str]
-        ) -> Iterable[str]:
+        ) -> Iterable[tuple[str, str]]:
             """Generates slices for a single sentence
 
             Returns:
@@ -303,57 +297,52 @@ class PyonmttokWrapper:
                 # yield everything between constraint ranges
                 between = sent[prev_start_idx : key[0]]
                 if between.startswith(" "):
-                    yield ["", ""]
-                if between.strip():
-                    yield [between.strip(), ""]
+                    yield ("", "")
+                if between_stripped := between.strip():
+                    yield (between_stripped, "")
                 if between.endswith(" ") and len(between) > 1:
-                    yield ["", ""]
+                    yield ("", "")
                 # yield constraint range
-                yield [sent[key[0] : key[1]], val]
+                yield (sent[key[0] : key[1]], val)
                 prev_start_idx = key[1]
 
-            # add last slice, even if its empty
+            # add last slice, even if it's empty
             if sent[prev_start_idx:].startswith(" "):
                 prev_start_idx += 1
-                yield ["", ""]
-            yield [sent[prev_start_idx:].strip(), ""]
+                yield ("", "")
+            yield (sent[prev_start_idx:].strip(), "")
 
         def generate_tokenized(
             src_slice_tokenized: list, constr_slice_tokenized: list
         ) -> Iterable[str]:
             add_space = True
             byteseq_byte_pattern = r"^<[\d\#]>$"
+
+            def assign_factors(s: list, constr_factor: str = "") -> Iterable:
+                return [
+                    f"{sw}|{constr_factor}"
+                    if not re.search(byteseq_byte_pattern, sw)
+                    else sw
+                    for sw in s.split()
+                ]
+
             for s, c in zip(src_slice_tokenized, constr_slice_tokenized):
                 if not s:
                     add_space = True
                     continue
                 # if constraint -> join both
-                if c:
+                if s == c:
+                    s = " ".join(assign_factors(s, "t2"))
+                elif c:
                     s = " ".join(
                         [
-                            *[
-                                f"{s_sw}|t1"
-                                if not re.search(byteseq_byte_pattern, s_sw)
-                                else s_sw
-                                for s_sw in s.split()
-                            ],
-                            *[
-                                f"{c_sw}|t2"
-                                if not re.search(byteseq_byte_pattern, c_sw)
-                                else c_sw
-                                for c_sw in c.split()
-                            ],
+                            *assign_factors(s, "t1"),
+                            *assign_factors(c, "t2"),
                         ]
                     )
                 else:
-                    s = " ".join(
-                        [
-                            f"{s_sw}|t0"
-                            if not re.search(byteseq_byte_pattern, s_sw)
-                            else s_sw
-                            for s_sw in s.split()
-                        ]
-                    )
+                    s = " ".join(assign_factors(s, "t0"))
+
                 first, *others = s.split(" ", 1)
                 if add_space:
                     first = first.replace("|gl+", "|gl-")
@@ -380,27 +369,26 @@ class PyonmttokWrapper:
             retval += (self.tokenize(sent),)
         return retval
 
-    # @dispatch(list, list, list)
-    # def tokenize(
-    #     self,
-    #     src: list[str],
-    #     tgt: list[str],
-    #     constraints: list[dict[tuple[tuple[int, int], tuple[int, int]], str]],
-    # ) -> tuple[list[str], list[str]]:
-    #     def generate_tuples(
-    #         constraints: list[dict[tuple[tuple[int, int], tuple[int, int]], str]],
-    #         idx: int,
-    #     ) -> Iterable[tuple[tuple[int, int], tuple[int, int]]]:
-    #         for constraint in constraints:
-    #             yield tuple({c[0][idx]: c[1]} for c in constraint.items())
-
-    #     src_constraints = generate_tuples(constraints, 0)
-    #     # tgt_constraints = generate_tuples(constraints, 1)  # if we should use it in tgt?
-    #     return self.tokenize(src, src_constraints), self.tokenize(tgt)
+    @dispatch(list, list, list)
+    def tokenize(
+        self,
+        src: list[str],
+        tgt: list[str],
+        constraints: list[dict[tuple[tuple[int, int], tuple[int, int]], str]],
+    ) -> tuple[list[str], list[str]]:
+        src_constraints = self.generate_tuples(constraints, 0)
+        # if we should use it in tgt?
+        tgt_constraints = self.generate_tuples(constraints, 1)
+        return (
+            self.tokenize(src, src_constraints),
+            self.tokenize(tgt, tgt_constraints),
+        )
 
     @dispatch(list, list)
     def tokenize(
-        self, src: list[str], constraints: list[dict[tuple[int, int], str]]
+        self,
+        src: list[str],
+        constraints: list[dict[tuple[int, int], str]],
     ) -> list[str]:
         """Tokenizes the input with constraints
 
@@ -430,10 +418,7 @@ class PyonmttokWrapper:
             src_path (str): path to source file
             tgt_path (str): path to target file
         """
-        with (
-            open(src_path, "r") as src,
-            open(tgt_path, "r") as tgt
-        ):
+        with open(src_path, "r") as src, open(tgt_path, "r") as tgt:
             self.detokenize(src, tgt)
 
     @dispatch(TextIOWrapper, TextIOWrapper)
@@ -551,6 +536,7 @@ class PyonmttokWrapper:
         vocab_path: str,
         constraints_path: str,
         return_list: bool = True,
+        only_src_spans: bool = False,
         wskip: float = 0.0,
         wrand: float = 0.0,
         sskip: float = 0.0,
@@ -614,13 +600,15 @@ class PyonmttokWrapper:
         with open(vocab_path, "r") as vocab_lines:
             for line in vocab_lines:
                 src_word, tgt_word = (word for word in line.rstrip().split("\t"))
-                vocab[src_word].add(tgt_word)
+                if src_word != tgt_word:
+                    vocab[src_word].add(tgt_word)
                 if lemmatize:
                     for src_word_lemma in src_lemmatizer.lemmatize(src_word):
                         src_word_lemma = src_word_lemma.decode()
                         vocab[src_word_lemma] = vocab[src_word_lemma].union(
                             tgt_word_lemma.decode()
                             for tgt_word_lemma in tgt_lemmatizer.lemmatize(tgt_word)
+                            if tgt_word_lemma.decode() != src_word_lemma
                         )
 
         retval = []
@@ -674,10 +662,7 @@ class PyonmttokWrapper:
             else None
         )
 
-        with (
-            open(src_path, "r") as src,
-            open(tgt_path, "r") as tgt
-        ):
+        with open(src_path, "r") as src, open(tgt_path, "r") as tgt:
             src_iter, src_iter_copy = tee(iter(src))
             n_lines = count_lines(src_iter_copy)
             tokenizer = Tokenizer(mode="aggressive")
@@ -686,6 +671,7 @@ class PyonmttokWrapper:
                 desc=f"Generating constraints for {src.name}",
                 n_lines=n_lines,
             ):
+                # sentence skip
                 rv = {}
                 if sskip and random.uniform(0.0, 1.0) < sskip:
                     if return_list:
@@ -717,6 +703,7 @@ class PyonmttokWrapper:
                         for src_word_lemma in src_lemmatizer.lemmatize(src_word):
                             if (src_word_lemma := src_word_lemma.decode()) in vocab:
                                 tgt_vocab_words += (vocab[src_word_lemma],)
+
                     # check if all mapping sets are empty
                     if not any(tgt_vocab_words):
                         continue
@@ -730,6 +717,7 @@ class PyonmttokWrapper:
                             tgt_span := find_span(tgt_word, tgt_sent, tgt_used_words)
                         ):
                             continue
+
                         if tgt_word in tgt_vocab_words[0] or (
                             lemmatize
                             and any(
@@ -743,7 +731,9 @@ class PyonmttokWrapper:
                             if constraint := process_constr(
                                 tgt_word, len(tgt_sent), src_span, tgt_span
                             ):
-                                rv[src_span] = constraint
+                                rv[
+                                    src_span if only_src_spans else (src_span, tgt_span)
+                                ] = constraint
                 # add constraints to the result (either final list or out file)
                 if return_list:
                     retval += (rv,)
@@ -789,6 +779,16 @@ class PyonmttokWrapper:
             case_feature=self.case_feature,
         )
 
+    @staticmethod
+    def generate_tuples(
+        constraints: list[dict[tuple[tuple[int, int], tuple[int, int]], str]],
+        idx: int,
+    ) -> Iterable[tuple[tuple[int, int], tuple[int, int]]]:
+        for constraint in constraints:
+            if type(constraint) != dict:
+                constraint = eval(constraint)
+            yield {c[0][idx]: c[1] for c in constraint.items()}
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -824,6 +824,7 @@ def parse_args():
         type=str,
         help="Path to the constraints file",
     )
+    parser.add_argument("--multispan_index", default=None, type=int)
     parser.add_argument(
         "--src_lang",
         default="",
@@ -883,6 +884,11 @@ def parse_args():
         type=int,
         help="Distance limit is used to define the ",
     )
+    parser.add_argument(
+        '--only_src_spans',
+        action='store_true',
+        default=False
+    )
 
     parser.add_argument("--vocab_size", default=32000, type=int, help="Vocabulary size")
     parser.add_argument(
@@ -935,6 +941,7 @@ if __name__ == "__main__":
             vocab_path=args.constraints_vocab_path,
             constraints_path=args.constraints_path,
             return_list=False,
+            only_src_spans=args.only_src_spans,
             wskip=args.wskip,
             wrand=args.wrand,
             sskip=args.sskip,
@@ -964,7 +971,12 @@ if __name__ == "__main__":
             if args.tokenize:
                 if args.constraints_path:
                     with open(args.constraints_path, "r") as constraints:
-                        tokenizer.tokenize(src, tgt, constraints)
+                        if args.multispan_index != None:
+                            tokenizer.tokenize(
+                                src, tgt, constraints, args.multispan_index
+                            )
+                        else:
+                            tokenizer.tokenize(src, tgt, constraints)
                 else:
                     tokenizer.tokenize(src, tgt)
             else:
