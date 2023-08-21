@@ -769,7 +769,7 @@ class PyonmttokWrapper:
         for file in files:
             if not os.path.exists(file):
                 continue
-            print(f"Ingesting file {file} ...")
+            print(f"Ingesting file {file} ...", file=sys.stdout)
             learner.ingest_file(file)
         learner.learn(self.model_path)
         # initialize the tokenizer from trained model
