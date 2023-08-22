@@ -70,12 +70,15 @@ class PyonmttokWrapper:
 
     @dispatch(TextIOWrapper, TextIOWrapper, TextIOWrapper, int)
     def tokenize(
-        self, src: TextIOWrapper, tgt: TextIOWrapper, constraints: TextIOWrapper, multispan_index = -1
+        self,
+        src: TextIOWrapper,
+        tgt: TextIOWrapper,
+        constraints: TextIOWrapper,
+        multispan_index=-1,
     ) -> None:
         if multispan_index > -1:
             constraints = list(self.generate_tuples(constraints, multispan_index))
         self.tokenize(src, tgt, constraints)
-
 
     @dispatch(TextIOWrapper, TextIOWrapper, (list, TextIOWrapper))
     def tokenize(
@@ -769,8 +772,12 @@ class PyonmttokWrapper:
         for file in files:
             if not os.path.exists(file):
                 continue
-            print(f"Ingesting file {file} ...", file=sys.stdout)
+            print(f"Ingesting file {file} ...", file=sys.stderr)
             learner.ingest_file(file)
+        print(
+            f"Training started. SP model will be saved to {self.model_path}.",
+            file=sys.stderr,
+        )
         learner.learn(self.model_path)
         # initialize the tokenizer from trained model
         self.tokenizer = Tokenizer(
@@ -884,11 +891,7 @@ def parse_args():
         type=int,
         help="Distance limit is used to define the ",
     )
-    parser.add_argument(
-        '--only_src_spans',
-        action='store_true',
-        default=False
-    )
+    parser.add_argument("--only_src_spans", action="store_true", default=False)
 
     parser.add_argument("--vocab_size", default=32000, type=int, help="Vocabulary size")
     parser.add_argument(
