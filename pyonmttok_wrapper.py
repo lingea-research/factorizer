@@ -112,32 +112,6 @@ class PyonmttokWrapper:
 
     @dispatch(str)
     def tokenize(self, src: str) -> str:
-        def parse_bits(byte: str) -> int:
-            """Parses the first 4 bits from the first byte (utf-8)
-
-            Args:
-                byte (str): string of byte
-
-            Returns:
-                cnt (int): number of bytes in sequence
-            """
-            bits, cnt = f"{int(byte, 16):0>8b}"[:4], 0
-            while cnt < 4 and bits[cnt] != "0":
-                cnt += 1
-            return cnt if cnt > 0 else 1
-
-        def byte_sequence2dec_sequence(byte_sequence: list[str]) -> str:
-            """Translates hexadecimal byte sequence to a decimal sequence
-
-            Args:
-                byte_sequence (list): byte sequence
-
-            Returns:
-                decimal sequence (str): dec representation of the byte sequence
-            """
-            bytes_str = str(ord(bytearray.fromhex("".join(byte_sequence)).decode("utf8")))
-            return f'{" ".join([f"<{c}>" for c in bytes_str])} <#>'
-
         def search_byte_pattern(txt: str) -> re.Match:
             """Searches for <0xDD> pattern in `txt`
 
@@ -150,21 +124,47 @@ class PyonmttokWrapper:
 
             return re.search(r"(?<=\<0[x])[\da-f]{2}(?=\>)", txt, flags=re.IGNORECASE)
 
-        def get_join_factors(token: Token) -> str:
-            """Gets string representation of join factors
-
-            Args:
-                token (Token): token object
-
-            Returns:
-                factors (str): string representation of join factors
-            """
-
-            join_factors = "|gl+" if token.join_left else "|gl-"  # if join left
-            join_factors += "|gr+" if token.join_right else "|gr-"  # if join right
-            return join_factors
-
         def process_tokens(tokens: list[Token]) -> Iterable[Token]:
+            def parse_bits(byte: str) -> int:
+                """Parses the first 4 bits from the first byte (utf-8)
+
+                Args:
+                    byte (str): string of byte
+
+                Returns:
+                    cnt (int): number of bytes in sequence
+                """
+                bits, cnt = f"{int(byte, 16):0>8b}"[:4], 0
+                while cnt < 4 and bits[cnt] != "0":
+                    cnt += 1
+                return cnt if cnt > 0 else 1
+
+            def byte_sequence2dec_sequence(byte_sequence: list[str]) -> str:
+                """Translates hexadecimal byte sequence to a decimal sequence
+
+                Args:
+                    byte_sequence (list): byte sequence
+
+                Returns:
+                    decimal sequence (str): dec representation of the byte sequence
+                """
+                bytes_str = str(ord(bytearray.fromhex("".join(byte_sequence)).decode("utf8")))
+                return f'{" ".join([f"<{c}>" for c in bytes_str])} <#>'
+
+            def get_join_factors(token: Token) -> str:
+                """Gets string representation of join factors
+
+                Args:
+                    token (Token): token object
+
+                Returns:
+                    factors (str): string representation of join factors
+                """
+
+                join_factors = "|gl+" if token.join_left else "|gl-"  # if join left
+                join_factors += "|gr+" if token.join_right else "|gr-"  # if join right
+                return join_factors
+
             tokens = iter(tokens)
             join_left = False
             for token in tokens:
