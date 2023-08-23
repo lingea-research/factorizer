@@ -14,7 +14,7 @@ import os
 import codecs
 import random
 from multipledispatch import dispatch
-from utils.lemmatizer import Lemmatizer
+from .utils.lemmatizer import Lemmatizer
 
 random.seed(1234)
 nl = "\n"
