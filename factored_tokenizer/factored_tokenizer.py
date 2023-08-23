@@ -37,7 +37,7 @@ def wrap_tqdm(to_be_wrapped: Iterable, desc: str, n_lines: int) -> Iterable:
         return to_be_wrapped
 
 
-class PyonmttokWrapper:
+class FactoredTokenizer:
     def __init__(
         self,
         model_path: str = None,
@@ -148,7 +148,9 @@ class PyonmttokWrapper:
                 Returns:
                     decimal sequence (str): dec representation of the byte sequence
                 """
-                bytes_str = str(ord(bytearray.fromhex("".join(byte_sequence)).decode("utf8")))
+                bytes_str = str(
+                    ord(bytearray.fromhex("".join(byte_sequence)).decode("utf8"))
+                )
                 return f'{" ".join([f"<{c}>" for c in bytes_str])} <#>'
 
             def get_join_factors(token: Token) -> str:
@@ -920,7 +922,7 @@ def parse_args():
 # cli
 if __name__ == "__main__":
     args = parse_args()
-    tokenizer = PyonmttokWrapper(
+    tokenizer = FactoredTokenizer(
         model_path=args.model_path,
         add_in=args.add_in,
         add_constr=args.add_constr,

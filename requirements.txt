@@ -1,3 +1,0 @@
-pyonmttok>=1.32.0
-multipledispatch>=0.6.0
-tqdm>=4.64.1
