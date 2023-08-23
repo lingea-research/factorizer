@@ -22,6 +22,17 @@ tests = ["attrs", "zope-interface"]
 tests-no-zope = ["cloudpickle", "hypothesis", "mypy (>=1.1.1)", "pympler", "pytest-mypy-plugins", "pytest-xdist", "pytest (>=4.3.0)"]
 
 [[package]]
+name = "click"
+version = "8.1.7"
+description = "Composable command line interface toolkit"
+category = "main"
+optional = false
+python-versions = ">=3.7"
+
+[package.dependencies]
+colorama = {version = "*", markers = "platform_system == \"Windows\""}
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 description = "Cross-platform colored terminal text."
@@ -130,11 +141,15 @@ python-versions = "*"
 [metadata]
 lock-version = "1.1"
 python-versions = ">=3.9, <3.12"
-content-hash = "c13e8561575676186c9da2a47bb9a22a757c62cfacca6a4056a77f544f43abbe"
+content-hash = "f781d8edb2b01fb3894e915e513caedcb7702e05c7cb5c6c8638ce723d775dcd"
 
 [metadata.files]
 atomicwrites = []
 attrs = []
+click = [
+    {file = "click-8.1.7-py3-none-any.whl", hash = "sha256:ae74fb96c20a0277a1d615f1e4d73c8414f5a98db8b799a7931d1582f3390c28"},
+    {file = "click-8.1.7.tar.gz", hash = "sha256:ca9853ad459e787e2192211578cc907e7594e294c7ccc834310722b41b9ca6de"},
+]
 colorama = []
 more-itertools = []
 multipledispatch = []

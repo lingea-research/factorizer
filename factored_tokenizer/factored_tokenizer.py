@@ -14,7 +14,11 @@ import os
 import codecs
 import random
 from multipledispatch import dispatch
-from .utils.lemmatizer import Lemmatizer
+try:
+    from .lemmatizer import Lemmatizer
+except ImportError:
+    from lemmatizer.lemmatizer import Lemmatizer
+
 
 random.seed(1234)
 nl = "\n"
@@ -919,7 +923,6 @@ def parse_args():
     return parser.parse_args()
 
 
-# cli
 if __name__ == "__main__":
     args = parse_args()
     tokenizer = FactoredTokenizer(
