@@ -2,7 +2,7 @@
 name = "factored-tokenizer"
 version = "0.1.0"
 description = ""
-authors = ["Maksim Tikhonov <81774545+Saipade@users.noreply.github.com>"]
+authors = ["Maksim Tikhonov <maksimt@lingea.net>"] 
 
 [tool.poetry.dependencies]
 python = ">=3.9, <3.12"
