@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
-from typing import Iterable, Optional, Iterator
+from typing import Iterable, Optional, Iterator, Union
 from pyonmttok import Token, Tokenizer, TokenType, Casing, SentencePieceLearner
 from collections import defaultdict
 from itertools import takewhile, islice, tee
@@ -14,6 +14,7 @@ import os
 import codecs
 import random
 from multipledispatch import dispatch
+
 try:
     from .lemmatizer import Lemmatizer
 except ImportError:
@@ -291,7 +292,13 @@ class FactoredTokenizer:
         return f'{tokenized_joined}{nl if src.endswith((nl, cr)) else ""}'
 
     @dispatch(str, dict)
-    def tokenize(self, src: str, constraints: dict[tuple[int, int], str]) -> str:
+    def tokenize(
+        self,
+        src: str,
+        constraints: dict[
+            Union[tuple[int, int], tuple[tuple[int, int], tuple[int, int]]], str
+        ],
+    ) -> str:
         def generate_slices(
             sent: str, constr: dict[tuple[int, int], str]
         ) -> Iterable[tuple[str, str]]:
@@ -727,7 +734,20 @@ class FactoredTokenizer:
                         ):
                             continue
 
-                        if tgt_word in tgt_vocab_words[0] or (
+                        tgt_word_rough = [
+                            tgt_word.lower(),
+                            tgt_word.upper(),
+                            tgt_word.capitalize(),
+                        ]
+                        tgt_vocab_words_rough = set(
+                            [
+                                *tgt_vocab_words[0],
+                                *[w.lower() for w in tgt_vocab_words[0]],
+                                *[w.upper() for w in tgt_vocab_words[0]],
+                                *[w.capitalize() for w in tgt_vocab_words[0]],
+                            ]
+                        )
+                        if any(w in tgt_vocab_words_rough for w in tgt_word_rough) or (
                             lemmatize
                             and any(
                                 tgt_vocab_lemmas.intersection(
@@ -797,7 +817,13 @@ class FactoredTokenizer:
         constraints: list[dict[tuple[tuple[int, int], tuple[int, int]], str]],
         idx: int,
     ) -> Iterable[tuple[tuple[int, int], tuple[int, int]]]:
-        for constraint in constraints:
+        src_iter, src_iter_copy = tee(iter(constraints))
+        n_lines = count_lines(src_iter_copy)
+        for constraint in wrap_tqdm(
+            to_be_wrapped=src_iter,
+            desc=f"Separating constraint ranges with index {idx}",
+            n_lines=n_lines,
+        ):
             if type(constraint) != dict:
                 constraint = eval(constraint)
             yield {c[0][idx]: c[1] for c in constraint.items()}
