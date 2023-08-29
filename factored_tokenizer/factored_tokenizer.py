@@ -346,9 +346,11 @@ class FactoredTokenizer:
                 if not s:
                     add_space = True
                     continue
-                # if constraint -> join both
+                # if src == constraint -> assign |t2 factor
                 if s == c:
                     s = " ".join(assign_factors(s, "t2"))
+                # if there is some constraint -> join both, assign the |t1 and |t2 factors
+                # to the source and constraint respectively
                 elif c:
                     s = " ".join(
                         [
@@ -356,6 +358,7 @@ class FactoredTokenizer:
                             *assign_factors(c, "t2"),
                         ]
                     )
+                # no constraint -> assign |t0 factor
                 else:
                     s = " ".join(assign_factors(s, "t0"))
 
