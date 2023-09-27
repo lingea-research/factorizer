@@ -60,7 +60,7 @@ class FactoredTokenizer:
                 mode="aggressive", sp_model_path=model_path, case_feature=case_feature
             )
         except ValueError:  # path does not exist (spm_train is used)
-            self.tokenizer = Tokenizer(model="aggressive", case_feature=case_feature)
+            self.tokenizer = Tokenizer(mode="aggressive", case_feature=case_feature)
         self.add_in = add_in
         self.reserved_symbols = reserved_symbols
 
