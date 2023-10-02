@@ -69,7 +69,7 @@ class FactoredTokenizer:
         with (
             open(src_path, "r") as src,
             open(tgt_path, "w") as tgt,
-            open(constraints_path, "r") as constraints,
+            open(constraints_path, "r") as constraints
         ):
             self.tokenize(src, tgt, constraints)
 
@@ -548,236 +548,6 @@ class FactoredTokenizer:
             retval += (self.detokenize(sent),)
         return retval
 
-    def generate_constraints(
-        self,
-        src_path: str,
-        tgt_path: str,
-        vocab_path: str,
-        constraints_path: str,
-        return_list: bool = True,
-        only_src_spans: bool = False,
-        wskip: float = 0.0,
-        wrand: float = 0.0,
-        sskip: float = 0.0,
-        use_lemmatization: bool = True,
-        distance_limit: int = 80,
-        distance_threshold: float = 0.4,
-        src_lang: str = "",
-        tgt_lang: str = "",
-        liblemm_path: str = "lib",
-    ) -> Optional[list[dict[tuple[int, int], str]]]:
-        """Generates the list of constraints
-
-        Args:
-            src_path (str): path to the source file
-            tgt_path (str): path to the target file
-            vocab_path (str): path to the bilingual dictionary
-            constraints_path (str): file path to a file with resulting constraints
-            return_list (bool): if we want to return a list of constraints
-            wskip (float): probability of word substitution skip
-            wrand (float): probability of word substitution randomization
-            sskip (float): probability of sentence skip
-              (leave it with the empty dict of constraints)
-            distance_limit (int): if length of the target sentence is
-              more than distance_limit, distance threshold test will be applied
-            distance_threshold (float): distance threshold
-              (1.0 == length of target sentence) between matched words
-            use_lemmatization (bool): add lemmatized versions to the dictionary and
-              source/target sentences
-            src_lang (str): iso code of the source language
-            tgt_lang (str): iso code of the target language
-            liblemm_path (str): path to the folder with vocabularies
-              and language codes (lingea)
-        Returns:
-            constraints (list): list of ranges with corresponding words
-        """
-
-        lemmatize = False
-        if use_lemmatization and os.path.exists(liblemm_path):
-            if not all((src_lang, tgt_lang)):
-                vocab_langs = vocab_path.rsplit(".", 1)[1]
-                src_lang = vocab_langs[:2]
-                tgt_lang = vocab_langs[-2:]
-            src_vocab_path = os.path.join(liblemm_path, f"lgmf_{src_lang}.lex")
-            tgt_vocab_path = os.path.join(liblemm_path, f"lgmf_{tgt_lang}.lex")
-            liblemm_iso_codes = os.path.join(liblemm_path, "liblemm_iso_codes.so")
-            try:
-                src_lemmatizer = Lemmatizer(
-                    src_lang, vocab=src_vocab_path, encoding="il2", path=liblemm_iso_codes
-                )
-                tgt_lemmatizer = Lemmatizer(
-                    tgt_lang, vocab=tgt_vocab_path, encoding="il2", path=liblemm_iso_codes
-                )
-            except:
-                pass
-            else:
-                lemmatize = True
-
-        vocab = defaultdict(set)
-
-        # read the vocab
-        with open(vocab_path, "r") as vocab_lines:
-            for line in vocab_lines:
-                src_word, tgt_word = (word for word in line.rstrip().split("\t"))
-                if src_word != tgt_word:
-                    vocab[src_word].add(tgt_word)
-                if lemmatize:
-                    for src_word_lemma in src_lemmatizer.lemmatize(src_word):
-                        src_word_lemma = src_word_lemma.decode()
-                        vocab[src_word_lemma] = vocab[src_word_lemma].union(
-                            tgt_word_lemma.decode()
-                            for tgt_word_lemma in tgt_lemmatizer.lemmatize(tgt_word)
-                            if tgt_word_lemma.decode() != src_word_lemma
-                        )
-
-        retval = []
-
-        def find_span(
-            word: str, sent: str, used_words: dict[str, int]
-        ) -> Optional[tuple[int, int]]:
-            if used_words[word] == -1:
-                return None
-            try:
-                span = list(
-                    re.finditer(
-                        r"(?<![\w_]){word}(?![\w_])".format(word=re.escape(word)), sent
-                    )
-                )[used_words[word]].span()
-            except IndexError:
-                used_words[word] = -1
-                return None
-            return span
-
-        def process_constr(
-            tgt_word: str,
-            tgt_sent_length: int,
-            src_span: tuple[int, int],
-            tgt_span: tuple[int, int],
-        ) -> Optional[str]:
-            if (
-                tgt_sent_length > distance_limit
-                and abs(tgt_span[0] - src_span[0]) / tgt_sent_length > distance_threshold
-            ):
-                return None
-            if wskip or wrand:
-                # Esentially the same noisification as the one in the MLM
-                # wskip (10% by default) - do nothing
-                # wrand (10% by default) - random token from the vocab
-                # other - normal substitution
-                dice_roll = random.uniform(0.0, 1.0)
-                if wskip and dice_roll < wskip:
-                    return None
-                elif wrand and dice_roll < wskip + wrand:
-                    random_values = random.choice(list(vocab.values()))
-                    return random.choice(list(random_values))
-            return tgt_word
-
-        # generate constraints
-        constr_out = (
-            open(constraints_path, "w")
-            if constraints_path is not sys.stdout
-            else sys.stdout
-            if constraints_path
-            else None
-        )
-
-        with open(src_path, "r") as src, open(tgt_path, "r") as tgt:
-            src_iter, src_iter_copy = tee(iter(src))
-            n_lines = count_lines(src_iter_copy)
-            tokenizer = Tokenizer(mode="aggressive")
-            for src_sent, tgt_sent in wrap_tqdm(
-                to_be_wrapped=zip(src_iter, tgt),
-                desc=f"Generating constraints for {src.name}",
-                n_lines=n_lines,
-            ):
-                # sentence skip
-                rv = {}
-                if sskip and random.uniform(0.0, 1.0) < sskip:
-                    if return_list:
-                        retval += (rv,)
-                    else:
-                        constr_out.write(
-                            f"{str(rv)}{nl if nl in src_sent or nl in tgt_sent else ''}"
-                        )
-                    continue
-                # used_{src,tgt}_words are dictionaries that are used
-                # for the storage of current index of some word in src/tgt sentence.
-                # it is useful for the case when we have non-singular number
-                # of some word in a sentence
-                src_used_words = defaultdict(int)
-                tgt_used_words = defaultdict(int)
-                tok_src_sent = tokenizer.tokenize(src_sent, as_token_objects=False)[0]
-                tok_tgt_sent = tokenizer.tokenize(tgt_sent, as_token_objects=False)[0]
-                for src_word in tok_src_sent:
-                    # set at the 0-th index will contain
-                    # non-lemmatized mappings from the vocab
-                    tgt_vocab_words = [set()]
-                    # non-lemmatized word is present in the vocabulary
-                    if src_word in vocab:
-                        tgt_vocab_words[0] = vocab[src_word]
-                    # if any of lemmas are present in the vocabulary
-                    elif lemmatize:
-                        # for some reason, our lemmatizer returns multiple lemmas for
-                        # a single word
-                        for src_word_lemma in src_lemmatizer.lemmatize(src_word):
-                            if (src_word_lemma := src_word_lemma.decode()) in vocab:
-                                tgt_vocab_words += (vocab[src_word_lemma],)
-
-                    # check if all mapping sets are empty
-                    if not any(tgt_vocab_words):
-                        continue
-                    # can't find word/no word to map
-                    if not (src_span := find_span(src_word, src_sent, src_used_words)):
-                        continue
-
-                    for tgt_word in tok_tgt_sent:
-                        # get span
-                        if not (
-                            tgt_span := find_span(tgt_word, tgt_sent, tgt_used_words)
-                        ):
-                            continue
-
-                        tgt_word_rough = [
-                            tgt_word.lower(),
-                            tgt_word.upper(),
-                            tgt_word.capitalize(),
-                        ]
-                        tgt_vocab_words_rough = set(
-                            [
-                                *tgt_vocab_words[0],
-                                *[w.lower() for w in tgt_vocab_words[0]],
-                                *[w.upper() for w in tgt_vocab_words[0]],
-                                *[w.capitalize() for w in tgt_vocab_words[0]],
-                            ]
-                        )
-                        if any(w in tgt_vocab_words_rough for w in tgt_word_rough) or (
-                            lemmatize
-                            and any(
-                                tgt_vocab_lemmas.intersection(
-                                    lemma.decode()
-                                    for lemma in tgt_lemmatizer.lemmatize(tgt_word)
-                                )
-                                for tgt_vocab_lemmas in tgt_vocab_words[1:]
-                            )
-                        ):
-                            if constraint := process_constr(
-                                tgt_word, len(tgt_sent), src_span, tgt_span
-                            ):
-                                rv[
-                                    src_span if only_src_spans else (src_span, tgt_span)
-                                ] = constraint
-                # add constraints to the result (either final list or out file)
-                if return_list:
-                    retval += (rv,)
-                else:
-                    constr_out.write(
-                        f"{str(rv)}{nl if nl in src_sent or nl in tgt_sent else ''}"
-                    )
-        if constr_out and constr_out is not sys.stdout:
-            constr_out.close()
-        if return_list:
-            return retval
-
     def spm_train(
         self,
         files: list[str],
@@ -801,12 +571,14 @@ class FactoredTokenizer:
         for file in files:
             if not os.path.exists(file):
                 continue
-            print(f"Ingesting file {file} ...", file=sys.stderr)
+            if not silent:
+                print(f"Ingesting file {file} ...", file=sys.stderr)
             learner.ingest_file(file)
-        print(
-            f"Training started. SP model will be saved to {self.model_path}.",
-            file=sys.stderr,
-        )
+        if not silent:
+            print(
+                f"Training started. SP model will be saved to {self.model_path}.",
+                file=sys.stderr,
+            )
         learner.learn(self.model_path)
         # initialize the tokenizer from trained model
         self.tokenizer = Tokenizer(
@@ -837,9 +609,6 @@ def parse_args():
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--tokenize", action="store_true", help="Tokenize a file")
     action.add_argument("--detokenize", action="store_true", help="Detokenize a file")
-    action.add_argument(
-        "--generate", action="store_true", help="Generate a constraints file"
-    )
     action.add_argument("--spm_train", action="store_true", help="Train an SP model")
     parser.add_argument(
         "-s",
@@ -866,37 +635,6 @@ def parse_args():
         type=str,
         help="Path to the constraints file",
     )
-    parser.add_argument("--multispan_index", default=None, type=int)
-    parser.add_argument(
-        "--src_lang",
-        default="",
-        type=str,
-        help="Source language (this parameter is required for the constraints generation only)",
-    )
-    parser.add_argument(
-        "--tgt_lang",
-        default="",
-        type=str,
-        help="Target language (this parameter is required for the constraints generation only)",
-    )
-    parser.add_argument(
-        "--wskip",
-        default=0.0,
-        type=float,
-        help="Word skip probability, for training data modification only",
-    )
-    parser.add_argument(
-        "--wrand",
-        default=0.0,
-        type=float,
-        help="Random substitution probability, for training data modification only",
-    )
-    parser.add_argument(
-        "--sskip",
-        default=0.0,
-        type=float,
-        help="Sentence skip probability, for training data modification only",
-    )
     parser.add_argument(
         "-m",
         "--model",
@@ -910,24 +648,6 @@ def parse_args():
     parser.add_argument(
         "--no_case_feature", action="store_false", dest="case_feature", default=True
     )
-    parser.add_argument(
-        "--constr_vocab",
-        dest="constraints_vocab_path",
-        default="",
-        type=str,
-        help="Path to the constraints vocabulary (bilingual word mappings)",
-    )
-    parser.add_argument(
-        "--distance_threshold", default=0.4, type=float, help="Distance threshold m"
-    )
-    parser.add_argument(
-        "--distance_limit",
-        default=80,
-        type=int,
-        help="Distance limit is used to define the ",
-    )
-    parser.add_argument("--only_src_spans", action="store_true", default=False)
-
     parser.add_argument("--vocab_size", default=32000, type=int, help="Vocabulary size")
     parser.add_argument(
         "--character_coverage",
@@ -964,32 +684,7 @@ if __name__ == "__main__":
     if args.silent:
         silent = True
 
-    # convert i/o to TextIOWrappers
-    if args.generate:
-        if not args.constraints_path:
-            args.constraints_path = sys.stdout
-        if args.tgt_path is sys.stdout:
-            raise argparse.ArgumentError(
-                "Target file cannot be stdout when generating constraints"
-            )
-        tokenizer.generate_constraints(
-            src_path=args.src_path,
-            tgt_path=args.tgt_path,
-            vocab_path=args.constraints_vocab_path,
-            constraints_path=args.constraints_path,
-            return_list=False,
-            only_src_spans=args.only_src_spans,
-            wskip=args.wskip,
-            wrand=args.wrand,
-            sskip=args.sskip,
-            use_lemmatization=True,
-            distance_limit=args.distance_limit,
-            distance_threshold=args.distance_threshold,
-            src_lang=args.src_lang,
-            tgt_lang=args.tgt_lang,
-            liblemm_path="lib",
-        )
-    elif args.spm_train:
+    if args.spm_train:
         tokenizer.spm_train(
             files=args.train_sets,
             vocab_size=args.vocab_size,
