@@ -1,6 +1,7 @@
 # Factored tokenizer
 
-Factor-based tokenizer. Wraps the OpenNMT tokenizer.
+Factor-based tokenizer. Wraps the [OpenNMT tokenizer](https://github.com/microsoft/factored-segmenter).
+
 ### Installation
 
 To install this package you should:
@@ -14,16 +15,23 @@ cd factored_tokenizer
 pip install .
 ```
 
-Either pip install [this](https://gitlab.lingea.cz/lingea/nlptools/factored_tokenizer) package or clone it and run `pip install .`.
+Either pip install [this](https://gitlab.lingea.cz/lingea/nlptools/factored_tokenizer) package or clone it and run `pip install -e .`.
 
 ### Usage
 
+#### Data processing
+
 ```
-# provide I/O via arguments
-./factored_tokenizer.py -m <path to .spm vocab> -s <path to the file to (de-)tokenize> -t <path to (de-)tokenized file> (--tokenize | --detokenize)
-# provide I/O via streams
-./factored_tokenizer.py -m <path to .spm vocab> (--tokenize | --detokenize) < <path to the file to (de-)tokenize> > <path to (de-)tokenized file>
+./factored_tokenizer.py (--tokenize | --detokenize) \
+  [--src SRC_FILE_PATH] [--tgt TGT_FILE_PATH] [--constr CONSTR_FILE_PATH] \
+  [--model SPM_MODEL_PATH] [--add_constr] [--no_case_feature] [--add_in] \
+  [--silent]
 ```
 
+#### SentencePiece model training
 
-
+```
+./factored_tokenizer.py --spm_train \
+  [--train_sets [TRAIN_SETS ...]] \
+  [--vocab_size VOCAB_SIZE] [--character_coverage CHARACTER_COVERAGE] [--train_extremely_large_corpus]
+```
