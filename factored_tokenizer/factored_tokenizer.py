@@ -68,16 +68,13 @@ class FactoredTokenizer:
         ):
             self.tokenize(src, tgt, constraints)
 
-    @dispatch(TextIOWrapper, TextIOWrapper, TextIOWrapper, int)
+    @dispatch(TextIOWrapper, TextIOWrapper, TextIOWrapper)
     def tokenize(
         self,
         src: TextIOWrapper,
         tgt: TextIOWrapper,
         constraints: TextIOWrapper,
-        multispan_index=-1,
     ) -> None:
-        if multispan_index > -1:
-            constraints = list(self.generate_tuples(constraints, multispan_index))
         self.tokenize(src, tgt, constraints)
 
     @dispatch(TextIOWrapper, TextIOWrapper, (list, TextIOWrapper))
@@ -383,21 +380,6 @@ class FactoredTokenizer:
             retval += (self.tokenize(sent),)
         return retval
 
-    @dispatch(list, list, list)
-    def tokenize(
-        self,
-        src: list[str],
-        tgt: list[str],
-        constraints: list[dict[tuple[tuple[int, int], tuple[int, int]], str]],
-    ) -> tuple[list[str], list[str]]:
-        src_constraints = self.generate_tuples(constraints, 0)
-        # if we should use it in tgt?
-        tgt_constraints = self.generate_tuples(constraints, 1)
-        return (
-            self.tokenize(src, src_constraints),
-            self.tokenize(tgt, tgt_constraints),
-        )
-
     @dispatch(list, list)
     def tokenize(
         self,
@@ -582,22 +564,6 @@ class FactoredTokenizer:
             case_feature=self.case_feature,
         )
 
-    @staticmethod
-    def generate_tuples(
-        constraints: list[dict[tuple[tuple[int, int], tuple[int, int]], str]],
-        idx: int,
-    ) -> Iterable[tuple[tuple[int, int], tuple[int, int]]]:
-        src_iter, src_iter_copy = tee(iter(constraints))
-        n_lines = count_lines(src_iter_copy)
-        for constraint in wrap_tqdm(
-            to_be_wrapped=src_iter,
-            desc=f"Separating constraint ranges with index {idx}",
-            n_lines=n_lines,
-        ):
-            if type(constraint) != dict:
-                constraint = eval(constraint)
-            yield {c[0][idx]: c[1] for c in constraint.items()}
-
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -698,12 +664,7 @@ if __name__ == "__main__":
             if args.tokenize:
                 if args.constraints_path:
                     with open(args.constraints_path, "r") as constraints:
-                        if args.multispan_index != None:
-                            tokenizer.tokenize(
-                                src, tgt, constraints, args.multispan_index
-                            )
-                        else:
-                            tokenizer.tokenize(src, tgt, constraints)
+                        tokenizer.tokenize(src, tgt, constraints)
                 else:
                     tokenizer.tokenize(src, tgt)
             else:
