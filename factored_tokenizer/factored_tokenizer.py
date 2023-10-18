@@ -15,11 +15,6 @@ import codecs
 import random
 from multipledispatch import dispatch
 
-try:
-    from .lemmatizer import Lemmatizer
-except ImportError:
-    from lemmatizer.lemmatizer import Lemmatizer
-
 
 random.seed(1234)
 nl = "\n"
