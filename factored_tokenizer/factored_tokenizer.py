@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
-from typing import Iterable, Iterator, Union
+from typing import Iterable, Union
 from pyonmttok import Token, Tokenizer, TokenType, Casing, SentencePieceLearner
 from itertools import takewhile, islice
 import re
@@ -125,8 +125,8 @@ class FactoredTokenizer:
                     factors (str): string representation of join factors
                 """
 
-                join_factors = "|gl+" if token.join_left else "|gl-"  # if join left
-                join_factors += "|gr+" if token.join_right else "|gr-"  # if join right
+                join_factors = "|gl+" if token.join_left else "|gl-"
+                join_factors += "|gr+" if token.join_right else "|gr-"
                 return join_factors
 
             tokens = iter(tokens)
@@ -224,8 +224,8 @@ class FactoredTokenizer:
                     else token.surface
                 )
 
-                # current token has join_right == True,
-                # so the next token will have join_left = True
+                # current token has join_right,
+                # so the next token will have join_left
                 join_left = False
                 if token.join_right == True:
                     join_left = True
@@ -330,8 +330,8 @@ class FactoredTokenizer:
 
         slices = generate_slices(src, constraints)
         src_slice, constr_slice = (list(s) for s in list(zip(*slices)))
-        src_slice_tokenized = self.__tokenize(src_slice)
-        constr_sliced_tokenized = self.__tokenize(constr_slice)
+        src_slice_tokenized = self.tokenize_batch(src_slice)
+        constr_sliced_tokenized = self.tokenize_batch(constr_slice)
         tokenized_joined = " ".join(
             generate_tokenized(src_slice_tokenized, constr_sliced_tokenized)
         )
@@ -527,26 +527,10 @@ def parse_args():
         help="Increase bit depth for unigram tokenization",
     )
     parser.add_argument("--train_sets", nargs="*", help="Files to be ingested")
-
-    parser.add_argument(
-        "--silent",
-        action="store_true",
-        default=False,
-        help="Turn off the tqdm progress bar",
-    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
-    def count_lines(i: Iterator) -> int:
-        cnt = 0
-        for _ in i:
-            cnt += 1
-        return cnt
-
-    def wrap_tqdm(to_be_wrapped: Iterable, desc: str, n_lines: int) -> Iterable:
-        return tqdm(to_be_wrapped, desc=desc, total=n_lines)
-
     args = parse_args()
     tokenizer = FactoredTokenizer(
         model_path=args.model_path,
@@ -554,9 +538,6 @@ if __name__ == "__main__":
         add_constr=args.add_constr,
         case_feature=args.case_feature,
     )
-
-    if args.silent:
-        silent = True
 
     if args.spm_train:
         tokenizer.spm_train(
