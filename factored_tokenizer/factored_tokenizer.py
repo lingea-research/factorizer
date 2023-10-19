@@ -1,40 +1,22 @@
 #!/usr/bin/env python3
 
 import argparse
-from typing import Iterable, Optional, Iterator, Union
+from typing import Iterable, Iterator, Union
 from pyonmttok import Token, Tokenizer, TokenType, Casing, SentencePieceLearner
-from collections import defaultdict
-from itertools import takewhile, islice, tee
+from itertools import takewhile, islice
 import re
-from io import TextIOWrapper
 import sys
 import copy
 from tqdm import tqdm
 import os
 import codecs
 import random
-from multipledispatch import dispatch
 
 
 random.seed(1234)
 nl = "\n"
 cr = "\r"
 unk = "{unk,gl,gr}"
-silent = False
-
-
-def count_lines(i: Iterator) -> int:
-    cnt = 0
-    for _ in i:
-        cnt += 1
-    return cnt
-
-
-def wrap_tqdm(to_be_wrapped: Iterable, desc: str, n_lines: int) -> Iterable:
-    if __name__ == "__main__" and not silent:
-        return tqdm(to_be_wrapped, desc=desc, total=n_lines)
-    else:
-        return to_be_wrapped
 
 
 class FactoredTokenizer:
@@ -59,56 +41,39 @@ class FactoredTokenizer:
         self.add_in = add_in
         self.reserved_symbols = reserved_symbols
 
-    @dispatch(str, str, str)
-    def tokenize(self, src_path: str, tgt_path: str, constraints_path: str) -> None:
-        with (
-            open(src_path, "r") as src,
-            open(tgt_path, "w") as tgt,
-            open(constraints_path, "r") as constraints
-        ):
-            self.tokenize(src, tgt, constraints)
-
-    @dispatch(TextIOWrapper, TextIOWrapper, TextIOWrapper)
     def tokenize(
+            self,
+            src: str,
+            constraints: dict[tuple[int, int], str]={},
+        ) -> list[str]:
+        return (self.__tokenize_constraints(src, constraints) if constraints
+            else self.__tokenize(src))
+
+    def tokenize_batch(
         self,
-        src: TextIOWrapper,
-        tgt: TextIOWrapper,
-        constraints: TextIOWrapper,
-    ) -> None:
-        self.tokenize(src, tgt, constraints)
+        src: list[str],
+        constraints: list[dict[tuple[int, int], str]]=[],
+    ) -> list[str]:
+        """Tokenizes the input with constraints
 
-    @dispatch(TextIOWrapper, TextIOWrapper, (list, TextIOWrapper))
-    def tokenize(
-        self, src: TextIOWrapper, tgt: TextIOWrapper, constraints: TextIOWrapper
-    ) -> None:
-        src_iter, src_iter_copy = tee(iter(src))
-        n_lines = count_lines(src_iter_copy)
+        Args:
+            src (list): list of raw source sentences
+            constraints (list): list of constraints of shape (range -> constraint)
 
-        for src_sent, constraint in wrap_tqdm(
-            to_be_wrapped=zip(src_iter, constraints),
-            desc=f"Tokenizing {src.name}",
-            n_lines=n_lines,
-        ):
-            if type(constraint) != dict:
-                constraint = eval(constraint)
-            tgt.write(self.tokenize(src_sent, constraint))
+        Returns:
+            output (list): tokenized sentences
+        """
+        if constraints and len(src) != len(constraints):
+            # since we are iterating over constarints, we need to add empty constraints,
+            # so their count will correspond to that of input sentences
+            while len(src) != len(constraints):
+                constraints += ({},)
 
-    @dispatch(str, str)
-    def tokenize(self, src_path: str, tgt_path: str) -> None:
-        with open(src_path, "r") as src, open(tgt_path, "w") as tgt:
-            self.tokenize(src, tgt)
+        if constraints:
+            return list(map(self.__tokenize_constraints, src, constraints))
+        return list(map(self.__tokenize, src))
 
-    @dispatch(TextIOWrapper, TextIOWrapper)
-    def tokenize(self, src: TextIOWrapper, tgt: TextIOWrapper) -> None:
-        src_iter, src_iter_copy = tee(iter(src))
-        n_lines = count_lines(src_iter_copy)
-        for src_sent in wrap_tqdm(
-            to_be_wrapped=src_iter, desc=f"Tokenizing {src.name}", n_lines=n_lines
-        ):
-            tgt.write(self.tokenize(src_sent))
-
-    @dispatch(str)
-    def tokenize(self, src: str) -> str:
+    def __tokenize(self, src: str) -> str:
         def search_byte_pattern(txt: str) -> re.Match:
             """Searches for <0xDD> pattern in `txt`
 
@@ -283,8 +248,7 @@ class FactoredTokenizer:
         )
         return f'{tokenized_joined}{nl if src.endswith((nl, cr)) else ""}'
 
-    @dispatch(str, dict)
-    def tokenize(
+    def __tokenize_constraints(
         self,
         src: str,
         constraints: dict[
@@ -366,67 +330,13 @@ class FactoredTokenizer:
 
         slices = generate_slices(src, constraints)
         src_slice, constr_slice = (list(s) for s in list(zip(*slices)))
-        src_slice_tokenized = self.tokenize(src_slice)
-        constr_sliced_tokenized = self.tokenize(constr_slice)
+        src_slice_tokenized = self.__tokenize(src_slice)
+        constr_sliced_tokenized = self.__tokenize(constr_slice)
         tokenized_joined = " ".join(
             generate_tokenized(src_slice_tokenized, constr_sliced_tokenized)
         )
         return f'{tokenized_joined}{nl if src.endswith((nl, cr)) else ""}'
 
-    @dispatch(list)
-    def tokenize(self, src: list[str]) -> list[str]:
-        retval = []
-        for sent in src:
-            retval += (self.tokenize(sent),)
-        return retval
-
-    @dispatch(list, list)
-    def tokenize(
-        self,
-        src: list[str],
-        constraints: list[dict[tuple[int, int], str]],
-    ) -> list[str]:
-        """Tokenizes the input with constraints
-
-        Args:
-            src (list): list of raw source sentences
-            constraints (list): list of constraints of shape (range -> constraint)
-
-        Returns:
-            output (list): tokenized sentences
-        """
-        if len(src) != len(constraints):
-            # since we are iterating over constarints, we need to add empty constraints,
-            # so their count will correspond to that of input sentences
-            while len(src) != len(constraints):
-                constraints += ({},)
-
-        retval = []
-        for sent, constr in zip(src, constraints):
-            retval += (self.tokenize(sent, constr),)
-        return retval
-
-    @dispatch(str, str)
-    def detokenize(self, src_path: str, tgt_path: str) -> None:
-        """Detokenizes the source file
-
-        Args:
-            src_path (str): path to source file
-            tgt_path (str): path to target file
-        """
-        with open(src_path, "r") as src, open(tgt_path, "r") as tgt:
-            self.detokenize(src, tgt)
-
-    @dispatch(TextIOWrapper, TextIOWrapper)
-    def detokenize(self, src: TextIOWrapper, tgt: TextIOWrapper) -> None:
-        src_iter, src_iter_copy = tee(iter(src))
-        n_lines = count_lines(src_iter_copy)
-        for src_sent in wrap_tqdm(
-            to_be_wrapped=src_iter, desc=f"Detokenizing {src.name}", n_lines=n_lines
-        ):
-            tgt.write(self.detokenize(src_sent))
-
-    @dispatch(str)
     def detokenize(self, src: str) -> str:
         def extract_subword_n_factors(token: str) -> tuple[str, list[str]]:
             try:
@@ -518,12 +428,8 @@ class FactoredTokenizer:
         detokenized_joined = "".join(self.tokenizer.detokenize(tokens))
         return f'{detokenized_joined}{nl if src.endswith((nl, cr)) else ""}'
 
-    @dispatch(list)
-    def detokenize(self, src: list[str]) -> list[str]:
-        retval = []
-        for sent in src:
-            retval += (self.detokenize(sent),)
-        return retval
+    def detokenize_batch(self, src: list[str]) -> list[str]:
+        return list(map(self.detokenize, src))
 
     def spm_train(
         self,
@@ -548,14 +454,12 @@ class FactoredTokenizer:
         for file in files:
             if not os.path.exists(file):
                 continue
-            if not silent:
-                print(f"Ingesting file {file} ...", file=sys.stderr)
+            print(f"Ingesting file {file} ...", file=sys.stderr)
             learner.ingest_file(file)
-        if not silent:
-            print(
-                f"Training started. SP model will be saved to {self.model_path}.",
-                file=sys.stderr,
-            )
+        print(
+            f"Training started. SP model will be saved to {self.model_path}.",
+            file=sys.stderr,
+        )
         learner.learn(self.model_path)
         # initialize the tokenizer from trained model
         self.tokenizer = Tokenizer(
@@ -634,6 +538,15 @@ def parse_args():
 
 
 if __name__ == "__main__":
+    def count_lines(i: Iterator) -> int:
+        cnt = 0
+        for _ in i:
+            cnt += 1
+        return cnt
+
+    def wrap_tqdm(to_be_wrapped: Iterable, desc: str, n_lines: int) -> Iterable:
+        return tqdm(to_be_wrapped, desc=desc, total=n_lines)
+
     args = parse_args()
     tokenizer = FactoredTokenizer(
         model_path=args.model_path,
@@ -652,20 +565,33 @@ if __name__ == "__main__":
             character_coverage=args.character_coverage,
             train_extremely_large_corpus=args.train_extremely_large_corpus,
         )
-    else:
+
+    elif args.tokenize:
         with (
             open(args.src_path, "r")
             if args.src_path is not sys.stdin
             else sys.stdin as src,
             open(args.tgt_path, "w")
             if args.tgt_path is not sys.stdout
-            else sys.stdout as tgt,
+            else sys.stdout as tgt
         ):
-            if args.tokenize:
-                if args.constraints_path:
-                    with open(args.constraints_path, "r") as constraints:
-                        tokenizer.tokenize(src, tgt, constraints)
-                else:
-                    tokenizer.tokenize(src, tgt)
+            if args.constraints_path:
+                with open(args.constraints_path, "r") as constraints:
+                    for s, c in tqdm(iterable=zip(src, constraints),
+                                     desc=f"Tokenizing {args.src_path}..."):
+                        tgt.write(tokenizer.tokenize(s, c))
             else:
-                tokenizer.detokenize(src, tgt)
+                for s in tqdm(iterable=src, desc=f"Tokenizing {args.src_path}..."):
+                    tgt.write(tokenizer.tokenize(s))
+
+    elif args.detokenize:
+        with (
+            open(args.src_path, "r")
+            if args.src_path is not sys.stdin
+            else sys.stdin as src,
+            open(args.tgt_path, "w")
+            if args.tgt_path is not sys.stdout
+            else sys.stdout as tgt
+        ):
+            for s in tqdm(iterable=src, desc=f"Detokenizing {args.src_path}..."):
+                tgt.write(tokenizer.detokenize(s))
