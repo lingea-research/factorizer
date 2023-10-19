@@ -24,8 +24,7 @@ Either pip install [this](https://gitlab.lingea.cz/lingea/nlptools/factored_toke
 ```
 ./factored_tokenizer.py (--tokenize | --detokenize) \
   [--src SRC_FILE_PATH] [--tgt TGT_FILE_PATH] [--constr CONSTR_FILE_PATH] \
-  [--model SPM_MODEL_PATH] [--add_constr] [--no_case_feature] [--add_in] \
-  [--silent]
+  [--model SPM_MODEL_PATH] [--add_constr] [--no_case_feature] [--add_in]
 ```
 
 #### SentencePiece model training
