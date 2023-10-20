@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 
 import argparse
-from typing import Iterable, Union
+from typing import Iterable
+import random
 from pyonmttok import Token, Tokenizer, TokenType, Casing, SentencePieceLearner
 from itertools import takewhile, islice
 import re
@@ -46,6 +47,8 @@ class FactoredTokenizer:
             src: str,
             constraints: dict[tuple[int, int], str]={},
         ) -> str:
+        if type(constraints) is str:
+            constraints = eval(constraints)
         return (self.__tokenize_constraints(src, constraints) if constraints
             else self.__tokenize(src))
 
@@ -63,14 +66,14 @@ class FactoredTokenizer:
         Returns:
             output (list): tokenized sentences
         """
-        if constraints and len(src) != len(constraints):
+        if constraints:
             # since we are iterating over constarints, we need to add empty constraints,
             # so their count will correspond to that of input sentences
+            constraints = [eval(c) for c in constraints]
             while len(src) != len(constraints):
                 constraints += ({},)
-
         return list(map(self.__tokenize_constraints, src, constraints) if constraints
-                    else map(self.__tokenize(src)))
+                    else map(self.__tokenize, src))
 
     def __tokenize(self, src: str) -> str:
         def search_byte_pattern(txt: str) -> re.Match:
@@ -518,6 +521,7 @@ def parse_args():
         help="Increase bit depth for unigram tokenization",
     )
     parser.add_argument("--train_sets", nargs="*", help="Files to be ingested")
+    parser.add_argument("--sskip", default=0.0, type=float)
     return parser.parse_args()
 
 
@@ -551,7 +555,10 @@ if __name__ == "__main__":
                 with open(args.constraints_path, "r") as constraints:
                     for s, c in tqdm(iterable=zip(src, constraints),
                                      desc=f"Tokenizing {args.src_path}..."):
-                        tgt.write(tokenizer.tokenize(s, c))
+                        if random.uniform(0, 1) > args.sskip:
+                            tgt.write(tokenizer.tokenize(s, c))
+                        else:
+                            tgt.write(tokenizer.tokenize(s))
             else:
                 for s in tqdm(iterable=src, desc=f"Tokenizing {args.src_path}..."):
                     tgt.write(tokenizer.tokenize(s))
