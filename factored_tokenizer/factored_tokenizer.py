@@ -69,9 +69,8 @@ class FactoredTokenizer:
             while len(src) != len(constraints):
                 constraints += ({},)
 
-        if constraints:
-            return list(map(self.__tokenize_constraints, src, constraints))
-        return list(map(self.__tokenize, src))
+        return list(map(self.__tokenize_constraints, src, constraints) if constraints
+                    else map(self.__tokenize(src)))
 
     def __tokenize(self, src: str) -> str:
         def search_byte_pattern(txt: str) -> re.Match:
