@@ -45,7 +45,7 @@ class FactoredTokenizer:
             self,
             src: str,
             constraints: dict[tuple[int, int], str]={},
-        ) -> list[str]:
+        ) -> str:
         return (self.__tokenize_constraints(src, constraints) if constraints
             else self.__tokenize(src))
 
@@ -250,19 +250,11 @@ class FactoredTokenizer:
     def __tokenize_constraints(
         self,
         src: str,
-        constraints: dict[
-            Union[tuple[int, int], tuple[tuple[int, int], tuple[int, int]]], str
-        ],
+        constraints: dict[tuple[int, int], str],
     ) -> str:
         def generate_slices(
             sent: str, constr: dict[tuple[int, int], str]
         ) -> Iterable[tuple[str, str]]:
-            """Generates slices for a single sentence
-
-            Returns:
-                slices (Generator): slices that were constructed based on constraints
-            """
-
             prev_start_idx = 0
             for key, val in sorted(constr.items()):
                 # yield everything between constraint ranges
@@ -284,7 +276,7 @@ class FactoredTokenizer:
             yield (sent[prev_start_idx:].strip(), "")
 
         def generate_tokenized(
-            src_slice_tokenized: list, constr_slice_tokenized: list
+            src_slice_tokenized: list[str], constr_slice_tokenized: list[str]
         ) -> Iterable[str]:
             add_space = True
             byteseq_byte_pattern = r"^<[\d\#]>$"
