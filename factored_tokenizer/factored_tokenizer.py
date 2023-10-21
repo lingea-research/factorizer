@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
-from typing import Iterable
+from typing import Iterable, Union
 import random
 from pyonmttok import Token, Tokenizer, TokenType, Casing, SentencePieceLearner
 from itertools import takewhile, islice
@@ -45,7 +45,7 @@ class FactoredTokenizer:
     def tokenize(
             self,
             src: str,
-            constraints: dict[tuple[int, int], str]={},
+            constraints: Union[str, dict[tuple[int, int], str]]={},
         ) -> str:
         if type(constraints) is str:
             constraints = eval(constraints)
@@ -55,7 +55,7 @@ class FactoredTokenizer:
     def tokenize_batch(
         self,
         src: list[str],
-        constraints: list[dict[tuple[int, int], str]]=[],
+        constraints: list[Union[str, dict[tuple[int, int], str]]]=[],
     ) -> list[str]:
         """Tokenizes the input with constraints
 
@@ -284,33 +284,35 @@ class FactoredTokenizer:
             add_space = True
             byteseq_byte_pattern = r"^<[\d\#]>$"
 
-            def assign_factors(s: list, constr_factor: str = "") -> Iterable:
-                return [
+            def assign_constr(s: list[str], constr_factor: str) -> Iterable:
+                if self.add_constr:
+                    return (
+                        re.sub(r"(?=\|)t0", constr_factor, sw)
+                        for sw in s.split()
+                    )
+                return (
                     f"{sw}|{constr_factor}"
                     if not re.search(byteseq_byte_pattern, sw)
                     else sw
                     for sw in s.split()
-                ]
+                )
 
             for s, c in zip(src_slice_tokenized, constr_slice_tokenized):
                 if not s:
                     add_space = True
                     continue
-                # if src == constraint -> assign |t2 factor
-                if s == c:
-                    s = " ".join(assign_factors(s, "t2"))
                 # if there is some constraint -> join both, assign the |t1 and |t2 factors
                 # to the source and constraint respectively
-                elif c:
+                if c:
                     s = " ".join(
                         [
-                            *assign_factors(s, "t1"),
-                            *assign_factors(c, "t2"),
+                            *assign_constr(s, "t1"),
+                            *assign_constr(c, "t2"),
                         ]
                     )
                 # no constraint -> assign |t0 factor
                 else:
-                    s = " ".join(assign_factors(s, "t0"))
+                    s = " ".join(assign_constr(s, "t0"))
 
                 first, *others = s.split(" ", 1)
                 if add_space:
