@@ -3,7 +3,7 @@ name = "factored-tokenizer"
 version = "0.1.0"
 description = ""
 authors = ["Maksim Tikhonov <maksimt@lingea.net>"]
-readme = "README.md
+readme = "README.md"
 packages = [{include = "factored_tokenizer"}]
 
 [tool.poetry.dependencies]
