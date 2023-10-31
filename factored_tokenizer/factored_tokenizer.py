@@ -527,7 +527,7 @@ def parse_args():
     return parser.parse_args()
 
 
-if __name__ == "__main__":
+def cli():
     args = parse_args()
     tokenizer = FactoredTokenizer(
         model_path=args.model_path,
@@ -576,3 +576,7 @@ if __name__ == "__main__":
         ):
             for s in tqdm(iterable=src, desc=f"Detokenizing {args.src_path}..."):
                 tgt.write(tokenizer.detokenize(s))
+
+
+if __name__ == "__main__":
+    cli()
