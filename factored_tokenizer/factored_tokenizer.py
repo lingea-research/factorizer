@@ -23,24 +23,40 @@ unk = "{unk,gl,gr}"
 class FactoredTokenizer:
     def __init__(
         self,
-        model_path: str = None,
+        sp_model_path: str = None,
         add_in: bool = False,
         add_constr: bool = False,
         case_feature: bool = True,
         reserved_symbols: list = ["#", ":", "_", "\\", "|", "▁"],
+        segment_numbers: bool = False,
+        preserve_placeholders: bool = True,
     ):
-        self.model_path = model_path
+        self.sp_model_path = sp_model_path
         self.add_in = add_in
         self.add_constr = add_constr
-        self.case_feature = case_feature
-        try:
-            self.tokenizer = Tokenizer(
-                mode="aggressive", sp_model_path=model_path, case_feature=case_feature
-            )
-        except ValueError:  # path does not exist (spm_train is used)
-            self.tokenizer = Tokenizer(mode="aggressive", case_feature=case_feature)
         self.add_in = add_in
         self.reserved_symbols = reserved_symbols
+        self.onmt_args = {
+            "mode": "aggressive",
+            "case_feature": case_feature,
+            "segment_numbers": segment_numbers,
+            "preserve_placeholders": preserve_placeholders,
+        }
+        if sp_model_path:
+            self.onmt_args["sp_model_path"] = sp_model_path
+
+        self.tokenizer = Tokenizer(**self.onmt_args)
+        # self.tokenizer = Tokenizer(
+        #     mode="aggressive",
+        #     sp_model_path=sp_model_path,
+        #     case_feature=case_feature,
+        #     segment_numbers=segment_numbers,
+        # )
+        # self.tokenizer = Tokenizer(
+        #     mode="aggressive",
+        #     case_feature=case_feature,
+
+        # )
 
     def tokenize(
         self,
@@ -435,6 +451,7 @@ class FactoredTokenizer:
         vocab_size: int,
         character_coverage: float,
         train_extremely_large_corpus: bool,
+        sp_model_path: str = None,
     ):
         """Trains an SP model
 
@@ -443,6 +460,8 @@ class FactoredTokenizer:
             vocab_size (int): size of the resulting vocabulary
             character_coverage (float): coverage of words
         """
+        if sp_model_path:
+            self.onmt_args["sp_model_path"] = sp_model_path
         learner = SentencePieceLearner(
             vocab_size=vocab_size,
             character_coverage=character_coverage,
@@ -455,16 +474,12 @@ class FactoredTokenizer:
             print(f"Ingesting file {file} ...", file=sys.stderr)
             learner.ingest_file(file)
         print(
-            f"Training started. SP model will be saved to {self.model_path}.",
+            f"Training started. SP model will be saved to {self.onmt_args['sp_model_path']}.",
             file=sys.stderr,
         )
-        learner.learn(self.model_path)
+        learner.learn(self.onmt_args["sp_model_path"])
         # initialize the tokenizer from trained model
-        self.tokenizer = Tokenizer(
-            mode="aggressive",
-            sp_model_path=self.model_path,
-            case_feature=self.case_feature,
-        )
+        self.tokenizer = Tokenizer(**self.onmt_args)
 
 
 def parse_args():
@@ -479,7 +494,6 @@ def parse_args():
         dest="src_path",
         default=sys.stdin,
         type=str,
-        help="Either a path to source file or string to be processed",
     )
     parser.add_argument(
         "-t",
@@ -487,7 +501,6 @@ def parse_args():
         dest="tgt_path",
         default=sys.stdout,
         type=str,
-        help="Path to target file",
     )
 
     parser.add_argument(
@@ -498,25 +511,19 @@ def parse_args():
         type=str,
         help="Path to the constraints file",
     )
-    parser.add_argument(
-        "-m",
-        "--model",
-        dest="model_path",
-        default=None,
-        type=str,
-        help="Path to the SP model",
-    )
     parser.add_argument("--add_in", action="store_true", default=False)
     parser.add_argument("--add_constr", action="store_true", default=False)
+
     parser.add_argument(
-        "--no_case_feature", action="store_false", dest="case_feature", default=True
+        "--vocab_size",
+        default=32000,
+        type=int,
     )
-    parser.add_argument("--vocab_size", default=32000, type=int, help="Vocabulary size")
     parser.add_argument(
         "--character_coverage",
         default=0.98,
         type=float,
-        help="Character coverage to determine the minimum symbols",
+        help="Amount of characters covered by the model",
     )
     parser.add_argument(
         "--train_extremely_large_corpus",
@@ -524,22 +531,63 @@ def parse_args():
         default=False,
         help="Increase bit depth for unigram tokenization",
     )
-    parser.add_argument("--train_sets", nargs="*", help="Files to be ingested")
+    parser.add_argument(
+        "--train_sets",
+        dest="files",
+        nargs="*",
+        help="Files to be ingested",
+    )
+
+    parser.add_argument(
+        "--no_case_feature",
+        action="store_false",
+        dest="case_feature",
+        default=True,
+    )
+    parser.add_argument(
+        "--reserved_symbols",
+        nargs="*",
+        default=["#", ":", "_", "\\", "|", "▁"],
+        type=list,
+    )
+    parser.add_argument(
+        "--segment_numbers",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--no_preserve_placeholders",
+        dest="preserve_placeholders",
+        action="store_false",
+        default=True,
+    )
+    parser.add_argument(
+        "-m",
+        "--model",
+        dest="sp_model_path",
+        default=None,
+        type=str,
+        help="Path to the SP model",
+    )
+
     return parser.parse_args()
 
 
 def cli():
     args = parse_args()
     tokenizer = FactoredTokenizer(
-        model_path=args.model_path,
+        sp_model_path=args.sp_model_path,
         add_in=args.add_in,
         add_constr=args.add_constr,
         case_feature=args.case_feature,
+        reserved_symbols=args.reserved_symbols,
+        segment_numbers=args.segment_numbers,
+        preserve_placeholders=args.preserve_placeholders,
     )
 
     if args.spm_train:
         tokenizer.spm_train(
-            files=args.train_sets,
+            files=args.files,
             vocab_size=args.vocab_size,
             character_coverage=args.character_coverage,
             train_extremely_large_corpus=args.train_extremely_large_corpus,
