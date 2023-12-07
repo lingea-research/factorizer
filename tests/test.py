@@ -4,8 +4,7 @@ from factored_tokenizer import FactoredTokenizer as Tokenizer
 
 def test_module():
     tokenizer = Tokenizer(
-        model_path=os.path.join(os.path.dirname(__file__), "models/csen-lowered.spm"),
-        add_in=False,
+        sp_model_path=os.path.join(os.path.dirname(__file__), "models/csen-lowered.spm"),
         case_feature=True,
     )
     input = [
@@ -24,8 +23,8 @@ def test_module():
     # tokenized_constraints = tokenizer.tokenize(input[0], constraints[0])
     detokenized_batch = tokenizer.detokenize_batch(tokenized_batch)
     detokenized = tokenizer.detokenize(tokenized)
-    assert input[0] == detokenized
-    assert input == detokenized_batch
+    assert input[0] == detokenized, f"\nin: {input[0]}\ndetok: {detokenized}"
+    assert input == detokenized_batch, f"\nin: {input}\ndetok: {detokenized_batch}"
 
 
 tests = [
