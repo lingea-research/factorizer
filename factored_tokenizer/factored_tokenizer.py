@@ -2,7 +2,6 @@
 
 import argparse
 from typing import Iterable, Union
-import random
 from pyonmttok import Token, Tokenizer, TokenType, Casing, SentencePieceLearner
 from itertools import takewhile, islice
 import re
@@ -11,10 +10,8 @@ import copy
 from tqdm import tqdm
 import os
 import codecs
-import random
 
 
-random.seed(1234)
 nl = "\n"
 cr = "\r"
 unk = "{unk,gl,gr}"
@@ -24,17 +21,15 @@ class FactoredTokenizer:
     def __init__(
         self,
         sp_model_path: str = None,
-        add_in: bool = False,
-        add_constr: bool = False,
+        factors_to_add: list[str] = [],
         case_feature: bool = True,
         reserved_symbols: list = ["#", ":", "_", "\\", "|", "▁"],
         segment_numbers: bool = False,
         preserve_placeholders: bool = True,
     ):
         self.sp_model_path = sp_model_path
-        self.add_in = add_in
-        self.add_constr = add_constr
-        self.add_in = add_in
+        self.factors_to_add = [factor if factor.startswith("|") else f"|{factor}"
+                               for factor in factors_to_add]
         self.reserved_symbols = reserved_symbols
         self.onmt_args = {
             "mode": "aggressive",
@@ -46,17 +41,6 @@ class FactoredTokenizer:
             self.onmt_args["sp_model_path"] = sp_model_path
 
         self.tokenizer = Tokenizer(**self.onmt_args)
-        # self.tokenizer = Tokenizer(
-        #     mode="aggressive",
-        #     sp_model_path=sp_model_path,
-        #     case_feature=case_feature,
-        #     segment_numbers=segment_numbers,
-        # )
-        # self.tokenizer = Tokenizer(
-        #     mode="aggressive",
-        #     case_feature=case_feature,
-
-        # )
 
     def tokenize(
         self,
@@ -108,7 +92,7 @@ class FactoredTokenizer:
                 bytes (re.Match): found byte sequence
             """
 
-            return re.search(r"(?<=\<0[x])[\da-f]{2}(?=\>)", txt, flags=re.IGNORECASE)
+            return re.search(r"(?<=\<0x)[\da-f]{2}(?=\>)", txt, flags=re.IGNORECASE)
 
         def process_tokens(tokens: list[Token]) -> Iterable[Token]:
             def parse_bits(byte: str) -> int:
@@ -148,57 +132,61 @@ class FactoredTokenizer:
                 Returns:
                     factors (str): string representation of join factors
                 """
+                # check next (non-byte) token, if word+join_left -> add gl+
+                tokens_copy = copy.copy(tokens)
+                try:
+                    next_token = next(tokens_copy)
+                    while re.search(
+                        r"(?<=\<0x)[\da-f]{2}(?=\>)",
+                        next_token.surface, flags=re.IGNORECASE
+                    ):
+                        next_token = next(tokens_copy)
+                except StopIteration:
+                    next_token = None
 
                 join_factors = "|gl+" if token.join_left else "|gl-"
-                join_factors += "|gr+" if token.join_right else "|gr-"
+                join_factors += ("|gr+" if token.join_right
+                                 or (next_token
+                                     and next_token.join_left
+                                     and next_token.type in [TokenType.LEADING_SUBWORD,
+                                                             TokenType.WORD])
+                                 else "|gr-")
                 return join_factors
 
             tokens = iter(tokens)
-            join_left = False
+            join_left_after_numeric = False  # there should be some more elegant solution
             for token in tokens:
                 byte = None
                 if token.surface in self.reserved_symbols:
                     byte = token.surface.encode()
                     hex = codecs.encode(byte, "hex").decode()
                     token.surface = f"<0x{hex}>"
-
+                # word
                 if token.surface.isalpha():
-                    if len(token.surface) > 1:  # word/subword
+                    # word/subword
+                    if len(token.surface) > 1:
                         token.features += (
-                            "|ca"
-                            if token.casing == Casing.UPPERCASE
-                            else "|ci"
-                            if token.casing == Casing.CAPITALIZED
+                            "|ca" if token.casing == Casing.UPPERCASE
+                            else "|ci" if token.casing == Casing.CAPITALIZED
                             else "|cn",
                         )
-                    else:  # single character
+                    # single character
+                    else:
                         token.features += (
                             "|scu"
-                            if token.casing
-                            in [
-                                Casing.CAPITALIZED,
-                                Casing.UPPERCASE,
-                            ]
+                            if token.casing in [Casing.CAPITALIZED, Casing.UPPERCASE,]
                             else "|scl",
                         )
-                    # the beginning of word
+                    # beginning of word
                     if (
-                        token.type
-                        in [
-                            TokenType.LEADING_SUBWORD,
-                            TokenType.WORD,
-                        ]
-                        and not join_left
+                        token.type in [TokenType.LEADING_SUBWORD, TokenType.WORD]
+                        and not join_left_after_numeric
                     ):
                         token.features += ("|wb",)
                     else:
                         token.features += ("|wbn",)
-                    # |in factor
-                    if self.add_in:
-                        token.features += ("|in",)
-                    if self.add_constr:
-                        token.features += ("|t0",)
-
+                        join_left_after_numeric = False
+                # numeric
                 elif token.surface.isnumeric():
                     if (
                         token.type
@@ -211,21 +199,13 @@ class FactoredTokenizer:
                         token.features += ("|wb",)
                     else:
                         token.features += ("|wbn",)
-                    if self.add_in:
-                        token.features += ("|in",)
-                    if self.add_constr:
-                        token.features += ("|t0",)
-
+                    if token.join_right is True:
+                        join_left_after_numeric = True
                 # unicode (find the first byte in byte sequence)
                 elif byte := search_byte_pattern(token.surface):
-                    token_sequence_length = parse_bits(
-                        byte.group()
-                    )  # number of tokens to be skipped
-                    token.features = [
-                        unk,
-                        get_join_factors(token),
-                        "|t0" if self.add_constr else "",
-                    ]
+                    # number of tokens to be skipped
+                    token_sequence_length = parse_bits(byte.group())
+                    token.features = [unk, get_join_factors(token),]
                     token_sequence = [
                         token,
                         *islice(tokens, 0, token_sequence_length - 1),
@@ -234,24 +214,19 @@ class FactoredTokenizer:
                         search_byte_pattern(token.surface).group()
                         for token in token_sequence
                     )
-
                 # other
                 else:
-                    token.features = [
-                        get_join_factors(token),
-                        "|in" if self.add_in else "",
-                        "|t0" if self.add_constr else "",
-                    ]
+                    token.features = [get_join_factors(token),]
+
+                # add factors
+                for factor in self.factors_to_add:
+                    token.features += (factor,)
 
                 new_surface = (
                     token.surface.upper()
                     if token.surface.upper().lower() == token.surface
                     else token.surface
                 )
-
-                join_left = False
-                if token.join_right == True:
-                    join_left = True
 
                 token.surface = (
                     f'{new_surface}{"".join(token.features)}'
@@ -511,8 +486,7 @@ def parse_args():
         type=str,
         help="Path to the constraints file",
     )
-    parser.add_argument("--add_in", action="store_true", default=False)
-    parser.add_argument("--add_constr", action="store_true", default=False)
+    parser.add_argument("--add_factors", dest="factors_to_add", nargs="*", default=[])
 
     parser.add_argument(
         "--vocab_size",
@@ -570,15 +544,21 @@ def parse_args():
         help="Path to the SP model",
     )
 
+    parser.add_argument(
+        "--silent",
+        action="store_true",
+        default=False,
+    )
     return parser.parse_args()
 
 
 def cli():
+    def _tqdm(iterable, desc):
+        return iterable if args.silent else tqdm(iterable=iterable, desc=desc)
     args = parse_args()
     tokenizer = FactoredTokenizer(
         sp_model_path=args.sp_model_path,
-        add_in=args.add_in,
-        add_constr=args.add_constr,
+        factors_to_add=args.factors_to_add,
         case_feature=args.case_feature,
         reserved_symbols=args.reserved_symbols,
         segment_numbers=args.segment_numbers,
@@ -604,13 +584,13 @@ def cli():
         ):
             if args.constraints_path:
                 with open(args.constraints_path, "r") as constraints:
-                    for s, c in tqdm(
+                    for s, c in _tqdm(
                         iterable=zip(src, constraints),
                         desc=f"Tokenizing {args.src_path}...",
                     ):
                         tgt.write(tokenizer.tokenize(s, c))
             else:
-                for s in tqdm(iterable=src, desc=f"Tokenizing {args.src_path}..."):
+                for s in _tqdm(iterable=src, desc=f"Tokenizing {args.src_path}..."):
                     tgt.write(tokenizer.tokenize(s))
 
     elif args.detokenize:
@@ -622,7 +602,7 @@ def cli():
             if args.tgt_path is not sys.stdout
             else sys.stdout as tgt,
         ):
-            for s in tqdm(iterable=src, desc=f"Detokenizing {args.src_path}..."):
+            for s in _tqdm(iterable=src, desc=f"Detokenizing {args.src_path}..."):
                 tgt.write(tokenizer.detokenize(s))
 
 
