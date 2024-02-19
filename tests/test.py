@@ -26,9 +26,12 @@ def test_module():
     assert input[0] == detokenized, f"\nin: {input[0]}\ndetok: {detokenized}"
     assert input == detokenized_batch, f"\nin: {input}\ndetok: {detokenized_batch}"
 
+def init():
+    t = Tokenizer()
 
 tests = [
     ("module", test_module),
+    ("empty_init", init),
 ]
 
 
