@@ -26,21 +26,35 @@ class FactoredTokenizer:
         reserved_symbols: list = ["#", ":", "_", "\\", "|", "▁"],
         segment_numbers: bool = False,
         preserve_placeholders: bool = True,
+        # legacy flags
+        add_in: bool = False,
+        add_t0: bool = False,
     ):
+        self.init_factors_to_add(factors_to_add, add_in, add_t0)
         self.sp_model_path = sp_model_path
-        self.factors_to_add = [factor if factor.startswith("|") else f"|{factor}"
-                               for factor in factors_to_add]
         self.reserved_symbols = reserved_symbols
         self.onmt_args = {
             "mode": "aggressive",
             "case_feature": case_feature,
             "segment_numbers": segment_numbers,
             "preserve_placeholders": preserve_placeholders,
+            "sp_model_path": sp_model_path,
         }
-        if sp_model_path:
-            self.onmt_args["sp_model_path"] = sp_model_path
+        if sp_model_path and os.path.exists(sp_model_path):
+            self.tokenizer = Tokenizer(**self.onmt_args)
 
-        self.tokenizer = Tokenizer(**self.onmt_args)
+    def init_factors_to_add(
+        self,
+        factors_to_add: list[str],
+        add_in: bool,
+        add_t0: bool
+    ) -> None:
+        self.factors_to_add = [factor if factor.startswith("|") else f"|{factor}"
+                               for factor in factors_to_add]
+        if add_in:
+            self.factors_to_add += ("|in",)
+        if add_t0:
+            self.factors_to_add += ("|t0",)
 
     def tokenize(
         self,
@@ -341,7 +355,7 @@ class FactoredTokenizer:
             token.join_left = True if "gl+" in factors else False
             token.join_right = True if "gr+" in factors else False
 
-        def process_tokens(tokens: list[str]) -> list[Token]:
+        def process_tokens(tokens: list[str]) -> Iterable[Token]:
             tokens = iter(tokens)
             for token in tokens:
                 subword, factors = extract_subword_n_factors(token)
@@ -434,9 +448,18 @@ class FactoredTokenizer:
             files (list): list of files to use for the training
             vocab_size (int): size of the resulting vocabulary
             character_coverage (float): coverage of words
+            train_extremely_large_corpus (bool): spm flag
+            sp_model_path (str): path to sp model
         """
+
         if sp_model_path:
             self.onmt_args["sp_model_path"] = sp_model_path
+        if (
+            not self.onmt_args["sp_model_path"]
+            or not os.path.exists(self.onmt_args["sp_model_path"])
+        ):
+            raise RuntimeError("Model path was not provided")
+
         learner = SentencePieceLearner(
             vocab_size=vocab_size,
             character_coverage=character_coverage,
