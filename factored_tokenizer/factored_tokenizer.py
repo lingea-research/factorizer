@@ -83,7 +83,7 @@ class FactoredTokenizer:
         Returns:
             output (list): tokenized sentences
         """
-        if constraints:
+        if constraints and isinstance(constraints, str):
             # since we are iterating over constarints, we need to add empty constraints,
             # so their count will correspond to that of input sentences
             constraints = [eval(c) for c in constraints]
@@ -295,14 +295,8 @@ class FactoredTokenizer:
             byteseq_byte_pattern = r"^<[\d\#]>$"
 
             def assign_constr(s: list[str], constr_factor: str) -> Iterable:
-                if self.add_constr:
-                    return (re.sub(r"(?=\|)t0", constr_factor, sw) for sw in s.split())
-                return (
-                    f"{sw}|{constr_factor}"
-                    if not re.search(byteseq_byte_pattern, sw)
-                    else sw
-                    for sw in s.split()
-                )
+                return (f"{sw}|{constr_factor}" if not re.search(byteseq_byte_pattern, sw)
+                        else sw for sw in s.split())
 
             for s, c in zip(src_slice_tokenized, constr_slice_tokenized):
                 if not s:
@@ -311,12 +305,10 @@ class FactoredTokenizer:
                 # if there is some constraint -> join both, assign the |t1 and |t2 factors
                 # to the source and constraint respectively
                 if c:
-                    s = " ".join(
-                        [
-                            *assign_constr(s, "t1"),
-                            *assign_constr(c, "t2"),
-                        ]
-                    )
+                    s = " ".join([
+                        *assign_constr(s, "t1"),
+                        *assign_constr(c, "t2"),
+                    ])
                 # no constraint -> assign |t0 factor
                 else:
                     s = " ".join(assign_constr(s, "t0"))
