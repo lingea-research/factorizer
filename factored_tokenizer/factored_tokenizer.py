@@ -458,11 +458,13 @@ class FactoredTokenizer:
             train_extremely_large_corpus=train_extremely_large_corpus,
             byte_fallback=True,
         )
-        for file in files:
-            if not os.path.exists(file):
+        for file_path in files:
+            if not os.path.exists(file_path):
                 continue
-            print(f"Ingesting file {file} ...", file=sys.stderr)
-            learner.ingest_file(file)
+            with open(file_path, "r") as file_in:
+                print(f"Ingesting file {file_path} ...", file=sys.stderr)
+                for line in file_in:
+                    learner.ingest(line.casefold())
         print(
             f"Training started. SP model will be saved to {self.onmt_args['sp_model_path']}.",
             file=sys.stderr,
