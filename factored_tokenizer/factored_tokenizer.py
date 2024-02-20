@@ -40,6 +40,8 @@ class FactoredTokenizer:
             "preserve_placeholders": preserve_placeholders,
             "sp_model_path": sp_model_path,
         }
+        
+        self.tokenizer = None
         if sp_model_path and os.path.exists(sp_model_path):
             self.tokenizer = Tokenizer(**self.onmt_args)
 
@@ -61,6 +63,8 @@ class FactoredTokenizer:
         src: str,
         constraints: Union[str, dict[tuple[int, int], str]] = {},
     ) -> str:
+        if self.tokenizer is None:
+            raise RuntimeError("ONMT Tokenizer was not initialized")
         if type(constraints) is str:
             constraints = eval(constraints)
         return (
@@ -333,6 +337,8 @@ class FactoredTokenizer:
         return f'{tokenized_joined}{nl if src.endswith((nl, cr)) else ""}'
 
     def detokenize(self, src: str) -> str:
+        if self.tokenizer is None:
+            raise RuntimeError("ONMT Tokenizer was not initialized.")
         def extract_subword_n_factors(token: str) -> tuple[str, list[str]]:
             try:
                 subword, factors = token.split("|", 1)
@@ -434,7 +440,7 @@ class FactoredTokenizer:
         train_extremely_large_corpus: bool,
         sp_model_path: str = None,
     ):
-        """Trains an SP model
+        """Trains an SP model on casefold files
 
         Args:
             files (list): list of files to use for the training
@@ -448,7 +454,6 @@ class FactoredTokenizer:
             self.onmt_args["sp_model_path"] = sp_model_path
         if (
             not self.onmt_args["sp_model_path"]
-            or not os.path.exists(self.onmt_args["sp_model_path"])
         ):
             raise RuntimeError("Model path was not provided")
 
