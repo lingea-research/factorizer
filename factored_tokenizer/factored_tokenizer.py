@@ -40,7 +40,6 @@ class FactoredTokenizer:
             "preserve_placeholders": preserve_placeholders,
             "sp_model_path": sp_model_path,
         }
-        
         self.tokenizer = None
         if sp_model_path and os.path.exists(sp_model_path):
             self.tokenizer = Tokenizer(**self.onmt_args)
