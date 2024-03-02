@@ -17,7 +17,7 @@ cr = "\r"
 unk = "{unk,gl,gr}"
 
 
-class FactoredTokenizer:
+class Factorizer:
     def __init__(
         self,
         sp_model_path: str = None,
@@ -577,7 +577,7 @@ def cli():
     def _tqdm(iterable, desc):
         return iterable if args.silent else tqdm(iterable=iterable, desc=desc)
     args = parse_args()
-    tokenizer = FactoredTokenizer(
+    tokenizer = Factorizer(
         sp_model_path=args.sp_model_path,
         factors_to_add=args.factors_to_add,
         case_feature=args.case_feature,

@@ -1,10 +1,10 @@
 [tool.poetry]
-name = "factored-tokenizer"
+name = "factorizer"
 version = "0.1.0"
 description = ""
 authors = ["Maksim Tikhonov <maksimt@lingea.net>"]
 readme = "README.md"
-packages = [{include = "factored_tokenizer"}]
+packages = [{include = "factorizer"}]
 
 [tool.poetry.dependencies]
 python = ">=3.9, <3.12"
@@ -21,4 +21,4 @@ requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-factored_tokenizer = "factored_tokenizer.factored_tokenizer:cli"
+factorizer  = "factorizer.factorizer:cli"

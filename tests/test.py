@@ -1,9 +1,9 @@
 import sys
 import os
-from factored_tokenizer import FactoredTokenizer as Tokenizer
+from factorizer import Factorizer
 
 def test_module():
-    tokenizer = Tokenizer(
+    tokenizer = Factorizer(
         sp_model_path=os.path.join(os.path.dirname(__file__), "models/csen-lowered.spm"),
         case_feature=True,
     )
@@ -33,7 +33,7 @@ def test_module():
     assert input == detokenized_batch, f"\nin: {input}\ndetok: {detokenized_batch}"
 
 def init():
-    t = Tokenizer()
+    t = Factorizer()
 
 tests = [
     ("module", test_module),
