@@ -21,13 +21,15 @@ pip install -e .
 ```
 ./factorizer.py (--tokenize | --detokenize) \
   [--src SRC_FILE_PATH] [--tgt TGT_FILE_PATH] [--constr CONSTR_FILE_PATH] \
-  [--model SPM_MODEL_PATH] [--add_constr] [--no_case_feature] [--add_in]
+  [--model SPM_MODEL_PATH] [--no_case_feature] [--no_preserve_placeholders] \
+  [--reserved_symbols [SYMBOLS ...]] [--add_factors [FACTORS ...]] [--silent]
 ```
 
 #### SentencePiece model training
 
 ```
 ./factorizer.py --spm_train \
-  [--train_sets [TRAIN_SETS ...]] \
-  [--vocab_size VOCAB_SIZE] [--character_coverage CHARACTER_COVERAGE] [--train_extremely_large_corpus]
+  [--train_sets [TRAIN_SETS ...]] [--vocab_size VOCAB_SIZE] \
+  [--character_coverage CHARACTER_COVERAGE] [--train_extremely_large_corpus] \
+  [--silent]
 ```
