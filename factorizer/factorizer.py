@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
+from __future__ import annotations
 import argparse
 from typing import Iterable, Union
-from pyonmttok import Token, Tokenizer, TokenType, Casing, SentencePieceLearner
+from pyonmttok import Token as ONMTToken, Tokenizer, TokenType, Casing, SentencePieceLearner
 from itertools import takewhile, islice
 import re
 import sys
@@ -14,8 +15,25 @@ import codecs
 
 nl = "\n"
 cr = "\r"
-unk = "{unk,gl,gr}"
 
+class Token(ONMTToken):
+    factor_separator = "|"
+    unk_lemma = "{unk,gl,gr}"
+    unk_digits = {f"<{i}>" for i in range(10)}
+    unk_sequence_end = "<#>"
+
+class Factors:
+    word_beg = "wb"
+    word_beg_not = "wbn"
+    signle_upper = "scu"
+    single_lower = "scl"
+    glue_left = "gl+"
+    glue_left_not = "gl-"
+    glue_right = "gr+"
+    glue_right_not = "gr-"
+
+    def __init__(self, new_factors: list[str]) -> None:
+        self.add_factors = new_factors
 
 class Factorizer:
     def __init__(
@@ -24,15 +42,17 @@ class Factorizer:
         factors_to_add: list[str] = [],
         case_feature: bool = True,
         reserved_symbols: list = ["#", ":", "_", "\\", "|", "▁"],
-        segment_numbers: bool = False,
         preserve_placeholders: bool = True,
+        segment_numbers: bool = False,
+        case_insensetive: bool = False,
         # legacy flags
         add_in: bool = False,
         add_t0: bool = False,
     ):
-        self.init_factors_to_add(factors_to_add, add_in, add_t0)
+        self.factors_to_add = factors_to_add
         self.sp_model_path = sp_model_path
         self.reserved_symbols = reserved_symbols
+        self.case_insensetive = case_insensetive
         self.onmt_args = {
             "mode": "aggressive",
             "case_feature": case_feature,
@@ -44,19 +64,6 @@ class Factorizer:
         if sp_model_path and os.path.exists(sp_model_path):
             self.tokenizer = Tokenizer(**self.onmt_args)
 
-    def init_factors_to_add(
-        self,
-        factors_to_add: list[str],
-        add_in: bool,
-        add_t0: bool
-    ) -> None:
-        self.factors_to_add = [factor if factor.startswith("|") else f"|{factor}"
-                               for factor in factors_to_add]
-        if add_in:
-            self.factors_to_add += ("|in",)
-        if add_t0:
-            self.factors_to_add += ("|t0",)
-
     def tokenize(
         self,
         src: str,
@@ -64,7 +71,7 @@ class Factorizer:
     ) -> str:
         if self.tokenizer is None:
             raise RuntimeError("ONMT Tokenizer was not initialized")
-        if type(constraints) is str:
+        if isinstance(constraints,  str):
             constraints = eval(constraints)
         return (
             self.__tokenize_constraints(src, constraints)
@@ -138,7 +145,7 @@ class Factorizer:
                 bytes_str = str(
                     ord(bytearray.fromhex("".join(byte_sequence)).decode("utf8"))
                 )
-                return f'{" ".join([f"<{c}>" for c in bytes_str])} <#>'
+                return f'{" ".join([f"<{c}>" for c in bytes_str])} {Token.unk_sequence_end}'
 
             def get_join_factors(token: Token) -> str:
                 """Gets string representation of join factors
@@ -222,7 +229,7 @@ class Factorizer:
                 elif byte := search_byte_pattern(token.surface):
                     # number of tokens to be skipped
                     token_sequence_length = parse_bits(byte.group())
-                    token.features = [unk, get_join_factors(token),]
+                    token.features = [Token.unk_lemma, get_join_factors(token),]
                     token_sequence = [
                         token,
                         *islice(tokens, 0, token_sequence_length - 1),
@@ -359,7 +366,7 @@ class Factorizer:
                 new_token = Token()
 
                 # process byte sequence
-                if re.search(unk, token):
+                if re.search(Token.unk_lemma, token):
                     byte_sequence_factors = extract_subword_n_factors(token)[1]
                     byte_sequence = "".join(
                         re.search(r"(?<=<)\d(?=>)", next_token).group(0)
@@ -380,7 +387,7 @@ class Factorizer:
                         )
                     assign_join(new_token, byte_sequence_factors)
 
-                elif find_any(factors, "wbn", "wb"):
+                elif find_any(factors, Factors.word_beg, Factors.word_beg_not):
                     # assign casing and surface
                     if find_any(factors, "scu", "ca"):
                         new_token.casing = Casing.UPPERCASE
