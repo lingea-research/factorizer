@@ -10,7 +10,6 @@ packages = [{include = "factorizer"}]
 python = ">=3.9, <3.12"
 pyonmttok = "^1.37.1"
 tqdm = "^4.66.1"
-multipledispatch = "^1.0.0"
 click = "^8.1.7"
 
 [tool.poetry.dev-dependencies]
