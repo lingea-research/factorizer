@@ -45,11 +45,10 @@ class Factorizer:
         preserve_placeholders: bool = True,
         segment_numbers: bool = False,
         case_insensetive: bool = False,
-        # legacy flags
-        add_in: bool = False,
-        add_t0: bool = False,
     ):
-        self.factors_to_add = factors_to_add
+        self.factors_to_add = [
+            f"|{f}" if not f.startswith("|") else f for f in factors_to_add
+        ]
         self.sp_model_path = sp_model_path
         self.reserved_symbols = reserved_symbols
         self.case_insensetive = case_insensetive
@@ -119,7 +118,7 @@ class Factorizer:
             return re.search(r"(?<=\<0x)[\da-f]{2}(?=\>)", txt, flags=re.IGNORECASE)
 
         def process_tokens(tokens: list[Token]) -> Iterable[Token]:
-            def parse_bits(byte: str) -> int:
+            def parse_utf8_bits(byte: str) -> int:
                 """Parses the first 4 bits from the first byte (utf-8)
 
                 Args:
@@ -177,6 +176,15 @@ class Factorizer:
                                  else "|gr-")
                 return join_factors
 
+            def parse_byte_sequence(byte: str) -> str:
+                token_sequence_length = parse_utf8_bits(byte.group())
+                token.features = [Token.unk_lemma, get_join_factors(token)]
+                token_sequence = [token, *islice(tokens, 0, token_sequence_length - 1)]
+                return byte_sequence2dec_sequence(
+                    search_byte_pattern(token.surface).group()
+                    for token in token_sequence
+                )
+
             tokens = iter(tokens)
             join_left_after_numeric = False  # there should be some more elegant solution
             for token in tokens:
@@ -184,9 +192,9 @@ class Factorizer:
                 if token.surface in self.reserved_symbols:
                     byte = token.surface.encode()
                     hex = codecs.encode(byte, "hex").decode()
-                    token.surface = f"<0x{hex}>"
+                    token.surface = parse_byte_sequence(f"<0x{hex}>")
                 # word
-                if token.surface.isalpha():
+                elif token.surface.isalpha():
                     # word/subword
                     if len(token.surface) > 1:
                         token.features += (
@@ -228,16 +236,7 @@ class Factorizer:
                 # unicode (find the first byte in byte sequence)
                 elif byte := search_byte_pattern(token.surface):
                     # number of tokens to be skipped
-                    token_sequence_length = parse_bits(byte.group())
-                    token.features = [Token.unk_lemma, get_join_factors(token),]
-                    token_sequence = [
-                        token,
-                        *islice(tokens, 0, token_sequence_length - 1),
-                    ]
-                    token.surface = byte_sequence2dec_sequence(
-                        search_byte_pattern(token.surface).group()
-                        for token in token_sequence
-                    )
+                    token.surface = parse_byte_sequence(byte)
                 # other
                 else:
                     token.features = [get_join_factors(token),]
@@ -343,8 +342,6 @@ class Factorizer:
         return f'{tokenized_joined}{nl if src.endswith((nl, cr)) else ""}'
 
     def detokenize(self, src: str) -> str:
-        if self.tokenizer is None:
-            raise RuntimeError("ONMT Tokenizer was not initialized.")
         def extract_subword_n_factors(token: str) -> tuple[str, list[str]]:
             try:
                 subword, factors = token.split("|", 1)
@@ -429,6 +426,9 @@ class Factorizer:
                     assign_join(new_token, factors)
 
                 yield new_token
+
+        if self.tokenizer is None:
+            raise RuntimeError("ONMT Tokenizer was not initialized.")
 
         tokens = src.split()
         tokens = list(process_tokens(tokens))
