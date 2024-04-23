@@ -110,7 +110,7 @@ def add_factors(lemma, add_constraints):
         if lemma.isalpha()
         else f"{lemma} : _lemma _has_gl _has_gr"
     )
-    if add_constraints and not (lemma.startswith("<") and lemma.endswith(">")):
+    if add_constraints and not re.search(r"^\<.*\>$", lemma):
         factored_lemma += " _has_t"
     return factored_lemma
 
