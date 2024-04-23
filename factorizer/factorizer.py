@@ -39,15 +39,21 @@ class Factorizer:
     def __init__(
         self,
         sp_model_path: str = None,
-        factors_to_add: list[str] = [],
+        # will be appended to ALL tokens except for the special ones (unk, ..)
+        factors_to_add_soft: list[str] = [],
+        # will be appended to ALL tokens
+        factors_to_add_hard: list[str] = [],
         case_feature: bool = True,
         reserved_symbols: list = ["#", ":", "_", "\\", "|", "▁"],
         preserve_placeholders: bool = True,
         segment_numbers: bool = False,
         case_insensetive: bool = False,
     ):
-        self.factors_to_add = [
-            f"|{f}" if not f.startswith("|") else f for f in factors_to_add
+        self.factors_to_add_soft = [
+            f"|{f}" if not f.startswith("|") else f for f in factors_to_add_soft
+        ]
+        self.factors_to_add_hard = [
+            f"|{f}" if not f.startswith("|") else f for f in factors_to_add_hard
         ]
         self.sp_model_path = sp_model_path
         self.reserved_symbols = reserved_symbols
@@ -242,8 +248,9 @@ class Factorizer:
                     token.features = [get_join_factors(token),]
 
                 # add factors
-                for factor in self.factors_to_add:
-                    token.features += (factor,)
+                if token.features[0] != Token.unk_lemma:
+                    token.features += self.factors_to_add_soft
+                token.features += self.factors_to_add_hard
 
                 new_surface = (
                     token.surface.upper()
