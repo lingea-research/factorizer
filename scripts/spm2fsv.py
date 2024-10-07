@@ -3,8 +3,12 @@ import argparse
 import sentencepiece as spm
 import regex as re
 import sys
-import time
 
+from factorizer.patterns import (
+    special_symbol_or_byte_pattern,
+    byte_seq_pattern,
+    continuous_scripts_pattern,
+)
 
 header = [
     "# factors",
@@ -86,11 +90,6 @@ footer = [
 ]
 
 
-special_symbol_or_byte_pattern = re.compile(r"^<.+>$", re.UNICODE)
-byte_seq_pattern = re.compile(r"\\x[a-fA-F\d]{2}", re.UNICODE)
-continuous_scripts_pattern = re.compile(
-    r"([\p{IsHan}\p{IsBopo}\p{IsHira}\p{IsKatakana}]+)", re.UNICODE
-)  # pattern for continuous scripts
 reserved_symbols = ["#", ":", "_", "\\", "|", "▁"]
 
 

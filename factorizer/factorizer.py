@@ -28,7 +28,7 @@ class Factorizer:
         # will be appended to ALL tokens
         factors_to_add_hard: list[str] = [],
         case_feature: bool = True,
-        reserved_symbols: list = ["#", ":", "_", "\\", "|", "▁"],
+        reserved_symbols: list[str] = ["#", ":", "_", "\\", "|", "▁"],
         preserve_placeholders: bool = True,
         segment_numbers: bool = False,
         case_insensetive: bool = False,
@@ -96,7 +96,7 @@ class Factorizer:
         )
 
     def __tokenize(self, src: str) -> str:
-        def search_byte_pattern(txt: str) -> re.Match:
+        def search_byte_pattern(txt: str) -> str | None:
             """Searches for <0xDD> pattern in `txt`
 
             Args:
@@ -106,11 +106,13 @@ class Factorizer:
                 bytes (re.Match): found byte sequence
             """
 
-            return re.search(
+            search_result = re.search(
                 r"(?<=\<0x)[\da-f]{2}(?=\>)",
                 txt,
                 flags=re.IGNORECASE,
             )
+            return search_result.group() if search_result else None
+
 
         def process_tokens(tokens: list[Token]) -> Iterable[Token]:
             def parse_utf8_bits(byte: str) -> int:
@@ -183,13 +185,13 @@ class Factorizer:
                 return join_factors
 
             def parse_byte_sequence(byte: str) -> str:
-                token_sequence_length = parse_utf8_bits(byte.group())
+                token_sequence_length = parse_utf8_bits(byte)
                 token.features = [Token.unk_lemma, *get_join_factors(token)]
                 token_sequence = [
                     token, *islice(tokens, 0, token_sequence_length - 1)
                 ]
                 return byte_sequence2dec_sequence(
-                    search_byte_pattern(token.surface).group()
+                    search_byte_pattern(token.surface)
                     for token in token_sequence
                 )
 
@@ -203,7 +205,8 @@ class Factorizer:
                 if token.surface in self.reserved_symbols:
                     byte = token.surface.encode()
                     hex = codecs.encode(byte, "hex").decode()
-                    token.surface = parse_byte_sequence(f"<0x{hex}>")
+                    token.surface = f"<0x{hex}>"
+                    token.surface = parse_byte_sequence(hex)
                 # word
                 elif token.surface.isalpha():
                     # word/subword
@@ -258,7 +261,7 @@ class Factorizer:
                     if token.join_right is True:
                         join_left_after_numeric = True
                 # unicode (find the first byte in byte sequence)
-                elif byte := search_byte_pattern(token.surface):
+                elif (byte := search_byte_pattern(token.surface)):
                     # number of tokens to be skipped
                     token.surface = parse_byte_sequence(byte)
                 # other
@@ -478,7 +481,21 @@ class Factorizer:
                                 new_token.type = TokenType.LEADING_SUBWORD
                             else:
                                 new_token.type = TokenType.WORD
-
+                elif find_any(
+                    factors,
+                    Factors.continuous_script_beg,
+                    Factors.continuous_script_beg_not,
+                ):
+                    new_token.casing = Casing.NONE
+                    new_token.surface = subword
+                    if Factors.continuous_script_beg in factors:
+                        new_token.type = TokenType.LEADING_SUBWORD
+                        new_token.spacer = True
+                        new_token.join_left = False
+                    else:
+                        new_token.type = TokenType.TRAILING_SUBWORD
+                        new_token.spacer = False
+                        new_token.join_left = True
                 # punctuation, emoji
                 else:
                     new_token.surface = subword

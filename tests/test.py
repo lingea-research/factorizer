@@ -11,7 +11,7 @@ def test_module():
     tokenizer = Factorizer(
         sp_model_path=os.path.join(
             os.path.dirname(__file__),
-            "models/test.spm"
+            "models/csen-lowered.spm"
         ),
         case_feature=True,
     )
