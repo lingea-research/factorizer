@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
-from __future__ import annotations
 import argparse
+import string
 from typing import Iterable, Union
-from pyonmttok import Token as ONMTToken, Tokenizer, TokenType, Casing, SentencePieceLearner
+from pyonmttok import Tokenizer, TokenType, Casing, SentencePieceLearner
 from itertools import takewhile, islice
 import re
 import sys
@@ -12,28 +12,11 @@ from tqdm import tqdm
 import os
 import codecs
 
+from factorizer.types import Token, Factors
+
 
 nl = "\n"
-cr = "\r"
 
-class Token(ONMTToken):
-    factor_separator = "|"
-    unk_lemma = "{unk,gl,gr}"
-    unk_digits = {f"<{i}>" for i in range(10)}
-    unk_sequence_end = "<#>"
-
-class Factors:
-    word_beg = "wb"
-    word_beg_not = "wbn"
-    signle_upper = "scu"
-    single_lower = "scl"
-    glue_left = "gl+"
-    glue_left_not = "gl-"
-    glue_right = "gr+"
-    glue_right_not = "gr-"
-
-    def __init__(self, new_factors: list[str]) -> None:
-        self.add_factors = new_factors
 
 class Factorizer:
     def __init__(
@@ -93,13 +76,14 @@ class Factorizer:
 
         Args:
             src (list): list of raw source sentences
-            constraints (list): list of constraints of shape (range -> constraint)
+            constraints (list): list of constraints of shape (range: constraint)
 
         Returns:
             output (list): tokenized sentences
         """
         if constraints and isinstance(constraints, str):
-            # since we are iterating over constarints, we need to add empty constraints,
+            # since we are iterating over constarints,
+            # we need to add empty constraints,
             # so their count will correspond to that of input sentences
             constraints = [eval(c) for c in constraints]
             while len(src) != len(constraints):
@@ -121,7 +105,11 @@ class Factorizer:
                 bytes (re.Match): found byte sequence
             """
 
-            return re.search(r"(?<=\<0x)[\da-f]{2}(?=\>)", txt, flags=re.IGNORECASE)
+            return re.search(
+                r"(?<=\<0x)[\da-f]{2}(?=\>)",
+                txt,
+                flags=re.IGNORECASE,
+            )
 
         def process_tokens(tokens: list[Token]) -> Iterable[Token]:
             def parse_utf8_bits(byte: str) -> int:
@@ -145,14 +133,20 @@ class Factorizer:
                     byte_sequence (list): byte sequence
 
                 Returns:
-                    decimal sequence (str): dec representation of the byte sequence
+                    decimal sequence (str): dec representation of
+                      the byte sequence
                 """
                 bytes_str = str(
-                    ord(bytearray.fromhex("".join(byte_sequence)).decode("utf8"))
+                    ord(bytearray.fromhex(
+                        "".join(byte_sequence)
+                    ).decode("utf8"))
                 )
-                return f'{" ".join([f"<{c}>" for c in bytes_str])} {Token.unk_sequence_end}'
+                return (
+                    f"{' '.join([f'<{c}>' for c in bytes_str])} "
+                    f"{Token.unk_sequence_end}"
+                )
 
-            def get_join_factors(token: Token) -> str:
+            def get_join_factors(token: Token) -> list[str]:
                 """Gets string representation of join factors
 
                 Args:
@@ -173,26 +167,33 @@ class Factorizer:
                 except StopIteration:
                     next_token = None
 
-                join_factors = "|gl+" if token.join_left else "|gl-"
-                join_factors += ("|gr+" if token.join_right
+                join_factors = [
+                    Factors.glue_left if token.join_left
+                    else Factors.glue_left_not
+                ]
+                join_factors += (Factors.glue_right if token.join_right
                                  or (next_token
                                      and next_token.join_left
-                                     and next_token.type in [TokenType.LEADING_SUBWORD,
-                                                             TokenType.WORD])
-                                 else "|gr-")
+                                     and next_token.type in [
+                                         TokenType.LEADING_SUBWORD,
+                                         TokenType.WORD
+                                     ])
+                                 else Factors.glue_right_not,)
                 return join_factors
 
             def parse_byte_sequence(byte: str) -> str:
                 token_sequence_length = parse_utf8_bits(byte.group())
-                token.features = [Token.unk_lemma, get_join_factors(token)]
-                token_sequence = [token, *islice(tokens, 0, token_sequence_length - 1)]
+                token.features = [Token.unk_lemma, *get_join_factors(token)]
+                token_sequence = [
+                    token, *islice(tokens, 0, token_sequence_length - 1)
+                ]
                 return byte_sequence2dec_sequence(
                     search_byte_pattern(token.surface).group()
                     for token in token_sequence
                 )
 
             tokens = iter(tokens)
-            join_left_after_numeric = False  # there should be some more elegant solution
+            join_left_after_numeric = False
             for token in tokens:
                 byte = None
                 if token.surface in self.reserved_symbols:
@@ -203,26 +204,31 @@ class Factorizer:
                 elif token.surface.isalpha():
                     # word/subword
                     if len(token.surface) > 1:
-                        token.features += (
-                            "|ca" if token.casing == Casing.UPPERCASE
-                            else "|ci" if token.casing == Casing.CAPITALIZED
-                            else "|cn",
-                        )
+                        match (token.casing):
+                            case Casing.UPPERCASE:
+                                token.features += (Factors.case_upper,)
+                            case Casing.CAPITALIZED:
+                                token.features += (Factors.case_capitalized,)
+                            case _:
+                                token.features += (Factors.case_lower,)
                     # single character
                     else:
-                        token.features += (
-                            "|scu"
-                            if token.casing in [Casing.CAPITALIZED, Casing.UPPERCASE,]
-                            else "|scl",
-                        )
+                        match (token.casing):
+                            case Casing.UPPERCASE | Casing.CAPITALIZED:
+                                token.features += (Factors.signle_upper,)
+                            case _:
+                                token.features += (Factors.single_lower,)
                     # beginning of word
                     if (
-                        token.type in [TokenType.LEADING_SUBWORD, TokenType.WORD]
+                        token.type in [
+                            TokenType.LEADING_SUBWORD,
+                            TokenType.WORD,
+                        ]
                         and not join_left_after_numeric
                     ):
-                        token.features += ("|wb",)
+                        token.features += (Factors.word_beg,)
                     else:
-                        token.features += ("|wbn",)
+                        token.features += (Factors.word_beg_not,)
                         join_left_after_numeric = False
                 # numeric
                 elif token.surface.isnumeric():
@@ -234,9 +240,9 @@ class Factorizer:
                         ]
                         and not token.join_left
                     ):
-                        token.features += ("|wb",)
+                        token.features += (Factors.word_beg,)
                     else:
-                        token.features += ("|wbn",)
+                        token.features += (Factors.word_beg_not,)
                     if token.join_right is True:
                         join_left_after_numeric = True
                 # unicode (find the first byte in byte sequence)
@@ -245,7 +251,7 @@ class Factorizer:
                     token.surface = parse_byte_sequence(byte)
                 # other
                 else:
-                    token.features = [get_join_factors(token),]
+                    token.features = get_join_factors(token)
 
                 # add factors
                 if token.features[0] != Token.unk_lemma:
@@ -259,9 +265,9 @@ class Factorizer:
                 )
 
                 token.surface = (
-                    f'{new_surface}{"".join(token.features)}'
+                    f'{new_surface}|{"|".join(token.features)}'
                     if not byte
-                    else f'{"".join(token.features)} {token.surface}'
+                    else f'{"|".join(token.features)} {token.surface}'
                 )
                 yield token
 
@@ -274,7 +280,10 @@ class Factorizer:
                 if token.surface and not search_byte_pattern(token.surface)
             ]
         )
-        return f'{tokenized_joined}{nl if src.endswith((nl, cr)) else ""}'
+        return (
+            f"{tokenized_joined}"
+            f"{nl if src.endswith(tuple(string.whitespace)) else ''}"
+        )
 
     def __tokenize_constraints(
         self,
@@ -311,14 +320,19 @@ class Factorizer:
             byteseq_byte_pattern = r"^<[\d\#]>$"
 
             def assign_constr(s: list[str], constr_factor: str) -> Iterable:
-                return (f"{sw}|{constr_factor}" if not re.search(byteseq_byte_pattern, sw)
-                        else sw for sw in s.split())
+                return (
+                    f"{sw}|{constr_factor}" if not re.search(
+                        byteseq_byte_pattern,
+                        sw,
+                    ) else sw for sw in s.split()
+                )
 
             for s, c in zip(src_slice_tokenized, constr_slice_tokenized):
                 if not s:
                     add_space = True
                     continue
-                # if there is some constraint -> join both, assign the |t1 and |t2 factors
+                # if there is some constraint, join both,
+                # assign the |t1 and |t2 factors
                 # to the source and constraint respectively
                 if c:
                     s = " ".join([
@@ -331,12 +345,24 @@ class Factorizer:
 
                 first, *others = s.split(" ", 1)
                 if add_space:
-                    first = first.replace("|gl+", "|gl-")
-                    first = first.replace("|wbn", "|wb")
+                    first = first.replace(
+                        Factors.glue_left,
+                        Factors.glue_left_not,
+                    )
+                    first = first.replace(
+                        Factors.word_beg_not,
+                        Factors.word_beg,
+                    )
                     add_space = False
                 else:
-                    first = first.replace("|gl-", "|gl+")
-                    first = first.replace("|wb", "|wbn")
+                    first = first.replace(
+                        Factors.glue_left_not,
+                        Factors.glue_left,
+                    )
+                    first = first.replace(
+                        f"|{Factors.word_beg}",
+                        f"|{Factors.word_beg_not}",
+                    )
                 yield " ".join([first, *others])
 
         slices = generate_slices(src, constraints)
@@ -346,7 +372,10 @@ class Factorizer:
         tokenized_joined = " ".join(
             generate_tokenized(src_slice_tokenized, constr_sliced_tokenized)
         )
-        return f'{tokenized_joined}{nl if src.endswith((nl, cr)) else ""}'
+        return (
+            f"{tokenized_joined}"
+            f"{nl if src.endswith(tuple(string.whitespace)) else ''}"
+        )
 
     def detokenize(self, src: str) -> str:
         def extract_subword_n_factors(token: str) -> tuple[str, list[str]]:
@@ -374,32 +403,42 @@ class Factorizer:
                     byte_sequence_factors = extract_subword_n_factors(token)[1]
                     byte_sequence = "".join(
                         re.search(r"(?<=<)\d(?=>)", next_token).group(0)
-                        for next_token in takewhile(lambda t: t != "<#>", tokens)
+                        for next_token in
+                        takewhile(lambda t: t != "<#>", tokens)
                     )
                     try:
                         new_token.surface = chr(int(byte_sequence))
-                    # invalid byte sequence (crucial for neural generated translations)
+                    # invalid byte sequence
+                    # (crucial for neural generated translations)
                     except (OverflowError, ValueError, TypeError):
                         new_token.surface = ""
                     else:
                         new_token.type = TokenType.WORD
                         new_token.spacer = True
                         new_token.casing = Casing.NONE
-                        # make it empty space if byte sequence is newline/carriage return
                         new_token.surface = (
-                            " " if new_token.surface in [nl, cr] else new_token.surface
+                            " " if new_token.surface in string.whitespace
+                            else new_token.surface
                         )
                     assign_join(new_token, byte_sequence_factors)
 
                 elif find_any(factors, Factors.word_beg, Factors.word_beg_not):
                     # assign casing and surface
-                    if find_any(factors, "scu", "ca"):
+                    if find_any(
+                        factors,
+                        Factors.signle_upper,
+                        Factors.case_upper,
+                    ):
                         new_token.casing = Casing.UPPERCASE
                         new_token.surface = subword
-                    elif "ci" in factors:
+                    elif Factors.case_capitalized in factors:
                         new_token.casing = Casing.CAPITALIZED
                         new_token.surface = subword.lower().capitalize()
-                    elif find_any(factors, "scl", "cn"):
+                    elif find_any(
+                        factors,
+                        Factors.single_lower,
+                        Factors.case_lower,
+                    ):
                         new_token.casing = Casing.LOWERCASE
                         new_token.surface = subword.lower()
                     else:
@@ -407,7 +446,7 @@ class Factorizer:
                         new_token.surface = subword
                     # word beginning/trailing subword
                     tokens_copy = copy.copy(tokens)
-                    if "wbn" in factors:
+                    if Factors.word_beg_not in factors:
                         new_token.type = TokenType.TRAILING_SUBWORD
                         new_token.join_left = True
                         new_token.spacer = False
@@ -419,7 +458,10 @@ class Factorizer:
                         except StopIteration:
                             new_token.type = TokenType.WORD
                         else:
-                            if "wbn" in extract_subword_n_factors(next_token)[1]:
+                            if (
+                                Factors.word_beg_not
+                                in extract_subword_n_factors(next_token)[1]
+                            ):
                                 new_token.type = TokenType.LEADING_SUBWORD
                             else:
                                 new_token.type = TokenType.WORD
@@ -440,7 +482,10 @@ class Factorizer:
         tokens = src.split()
         tokens = list(process_tokens(tokens))
         detokenized_joined = "".join(self.tokenizer.detokenize(tokens))
-        return f'{detokenized_joined}{nl if src.endswith((nl, cr)) else ""}'
+        return (
+            f"{detokenized_joined}"
+            f"{nl if src.endswith(tuple(string.whitespace)) else ''}"
+        )
 
     def detokenize_batch(self, src: list[str]) -> list[str]:
         return list(map(self.detokenize, src))
@@ -484,7 +529,8 @@ class Factorizer:
                 for line in file_in:
                     learner.ingest(line.casefold())
         print(
-            f"Training started. SP model will be saved to {self.onmt_args['sp_model_path']}.",
+            f"Training started. SP model will be "
+            f"saved to {self.onmt_args['sp_model_path']}.",
             file=sys.stderr,
         )
         learner.learn(self.onmt_args["sp_model_path"])
@@ -495,9 +541,21 @@ class Factorizer:
 def parse_args():
     parser = argparse.ArgumentParser()
     action = parser.add_mutually_exclusive_group(required=True)
-    action.add_argument("--tokenize", action="store_true", help="Tokenize a file")
-    action.add_argument("--detokenize", action="store_true", help="Detokenize a file")
-    action.add_argument("--spm_train", action="store_true", help="Train an SP model")
+    action.add_argument(
+        "--tokenize",
+        action="store_true",
+        help="Tokenize a file",
+    )
+    action.add_argument(
+        "--detokenize",
+        action="store_true",
+        help="Detokenize a file",
+    )
+    action.add_argument(
+        "--spm_train",
+        action="store_true",
+        help="Train an SP model",
+    )
     parser.add_argument(
         "-s",
         "--src",
@@ -521,7 +579,18 @@ def parse_args():
         type=str,
         help="Path to the constraints file",
     )
-    parser.add_argument("--add_factors", dest="factors_to_add", nargs="*", default=[])
+    parser.add_argument(
+        "--add_factors_soft",
+        dest="factors_to_add_soft",
+        nargs="*",
+        default=[]
+    )
+    parser.add_argument(
+        "--add_factors_hard",
+        dest="factors_to_add_hard",
+        nargs="*",
+        default=[]
+    )
 
     parser.add_argument(
         "--vocab_size",
@@ -593,7 +662,8 @@ def cli():
     args = parse_args()
     tokenizer = Factorizer(
         sp_model_path=args.sp_model_path,
-        factors_to_add=args.factors_to_add,
+        factors_to_add_soft=args.factors_to_add_soft,
+        factors_to_add_hard=args.factors_to_add_hard,
         case_feature=args.case_feature,
         reserved_symbols=args.reserved_symbols,
         segment_numbers=args.segment_numbers,
@@ -625,7 +695,10 @@ def cli():
                     ):
                         tgt.write(tokenizer.tokenize(s, c))
             else:
-                for s in _tqdm(iterable=src, desc=f"Tokenizing {args.src_path}..."):
+                for s in _tqdm(
+                    iterable=src,
+                    desc=f"Tokenizing {args.src_path}...",
+                ):
                     tgt.write(tokenizer.tokenize(s))
 
     elif args.detokenize:
@@ -637,7 +710,10 @@ def cli():
             if args.tgt_path is not sys.stdout
             else sys.stdout as tgt,
         ):
-            for s in _tqdm(iterable=src, desc=f"Detokenizing {args.src_path}..."):
+            for s in _tqdm(
+                iterable=src,
+                desc=f"Detokenizing {args.src_path}...",
+            ):
                 tgt.write(tokenizer.detokenize(s))
 
 
