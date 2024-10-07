@@ -22,7 +22,8 @@ pip install -e .
 ./factorizer.py (--tokenize | --detokenize) \
   [--src SRC_FILE_PATH] [--tgt TGT_FILE_PATH] [--constr CONSTR_FILE_PATH] \
   [--model SPM_MODEL_PATH] [--no_case_feature] [--no_preserve_placeholders] \
-  [--reserved_symbols [SYMBOLS ...]] [--add_factors [FACTORS ...]] [--silent]
+  [--reserved_symbols [SYMBOLS ...]] [--add_factors_soft [FACTORS ...]] \
+  [--add_factors_hard [FACTORS ...]] [--silent]
 ```
 
 #### SentencePiece model training
