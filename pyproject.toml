@@ -11,6 +11,8 @@ python = ">=3.9, <3.12"
 pyonmttok = "^1.37.1"
 tqdm = "^4.66.1"
 click = "^8.1.7"
+regex = "^2024.9.11"
+sentencepiece = "^0.2.0"
 
 [tool.poetry.dev-dependencies]
 pytest = "^5.2"
