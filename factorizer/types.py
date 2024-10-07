@@ -19,6 +19,8 @@ class Factors:
     case_upper = "ca"
     case_capitalized = "ci"
     case_lower = "cn"
+    continuous_script_beg = "cb"
+    continuous_script_beg_not = "cbn"
 
 
     def __init__(self, new_factors: list[str]) -> None:

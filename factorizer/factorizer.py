@@ -13,6 +13,7 @@ import os
 import codecs
 
 from factorizer.types import Token, Factors
+from factorizer.patterns import byteseq_byte_pattern, continuous_scripts_pattern
 
 
 nl = "\n"
@@ -196,6 +197,9 @@ class Factorizer:
             join_left_after_numeric = False
             for token in tokens:
                 byte = None
+                continuous_script = continuous_scripts_pattern.search(
+                    token.surface
+                )
                 if token.surface in self.reserved_symbols:
                     byte = token.surface.encode()
                     hex = codecs.encode(byte, "hex").decode()
@@ -212,7 +216,7 @@ class Factorizer:
                             case _:
                                 token.features += (Factors.case_lower,)
                     # single character
-                    else:
+                    elif not continuous_script:
                         match (token.casing):
                             case Casing.UPPERCASE | Casing.CAPITALIZED:
                                 token.features += (Factors.signle_upper,)
@@ -226,9 +230,17 @@ class Factorizer:
                         ]
                         and not join_left_after_numeric
                     ):
-                        token.features += (Factors.word_beg,)
+                        token.features += (
+                            Factors.word_beg
+                            if not continuous_script
+                            else Factors.continuous_script_beg,
+                        )
                     else:
-                        token.features += (Factors.word_beg_not,)
+                        token.features += (
+                            Factors.word_beg_not
+                            if not continuous_script
+                            else Factors.continuous_script_beg_not,
+                        )
                         join_left_after_numeric = False
                 # numeric
                 elif token.surface.isnumeric():
@@ -317,12 +329,13 @@ class Factorizer:
             src_slice_tokenized: list[str], constr_slice_tokenized: list[str]
         ) -> Iterable[str]:
             add_space = True
-            byteseq_byte_pattern = r"^<[\d\#]>$"
 
-            def assign_constr(s: list[str], constr_factor: str) -> Iterable:
+            def assign_constr(
+                s: list[str],
+                constr_factor: str,
+            ) -> Iterable[str]:
                 return (
-                    f"{sw}|{constr_factor}" if not re.search(
-                        byteseq_byte_pattern,
+                    f"{sw}|{constr_factor}" if not byteseq_byte_pattern.search(
                         sw,
                     ) else sw for sw in s.split()
                 )
