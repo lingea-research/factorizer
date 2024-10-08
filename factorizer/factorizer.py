@@ -216,14 +216,14 @@ class Factorizer:
                                 token.features += (Factors.case_upper,)
                             case Casing.CAPITALIZED:
                                 token.features += (Factors.case_capitalized,)
-                            case _:
+                            case Casing.LOWERCASE:
                                 token.features += (Factors.case_lower,)
                     # single character
                     elif not continuous_script:
                         match (token.casing):
                             case Casing.UPPERCASE | Casing.CAPITALIZED:
                                 token.features += (Factors.signle_upper,)
-                            case _:
+                            case Casing.LOWERCASE:
                                 token.features += (Factors.single_lower,)
                     # beginning of word
                     if (
